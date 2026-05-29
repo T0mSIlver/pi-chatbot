@@ -1,5 +1,6 @@
 import "server-only";
 
+import { existsSync } from "node:fs";
 import path from "node:path";
 import {
   AuthStorage,
@@ -31,6 +32,23 @@ function getBundledSkillPaths() {
   return [path.join(skillsRoot, "brave-search")];
 }
 
+/**
+ * Model definitions ship with the app (committed at `<repo>/config/pi-models.json`)
+ * so the same providers/models are available on every deployment without writing
+ * into `~/.pi/agent/models.json`. Precedence:
+ *   1. PI_CHATBOT_MODELS_FILE (explicit override)
+ *   2. the bundled repo config, if present
+ *   3. the user's ~/.pi/agent/models.json (pi default)
+ */
+function getModelsJsonPath(agentDir: string) {
+  const override = process.env.PI_CHATBOT_MODELS_FILE;
+  if (override) {
+    return override;
+  }
+  const bundled = path.join(process.cwd(), "config", "pi-models.json");
+  return existsSync(bundled) ? bundled : path.join(agentDir, "models.json");
+}
+
 export async function createPiSdkSession({
   workspacePath,
   sessionFilePath,
@@ -44,7 +62,7 @@ export async function createPiSdkSession({
   const authStorage = AuthStorage.create(path.join(agentDir, "auth.json"));
   const modelRegistry = ModelRegistry.create(
     authStorage,
-    path.join(agentDir, "models.json")
+    getModelsJsonPath(agentDir)
   );
 
   const requested = splitModelId(selectedModelId ?? DEFAULT_CHAT_MODEL);

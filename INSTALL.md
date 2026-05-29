@@ -85,10 +85,23 @@ BRAVE_API_KEY=your-key bash skills/brave-search/search.sh "test query" 3
 
 ## The Pi model backend
 
-Chat runs through the Pi coding agent, which reads model credentials from
-`~/.pi/agent/auth.json` and model definitions from `~/.pi/agent/models.json`.
-Configure a model provider there (see the pi docs) so the agent has a model to
-talk to. The default model id is set in `lib/ai/models.ts`.
+Chat runs through the Pi coding agent. The model/provider definitions are
+**bundled with the app** at [`config/pi-models.json`](config/pi-models.json) and
+loaded automatically (`lib/pi/session.ts`) — the same models that work here work
+on the deployed box, with nothing to configure in `~/.pi`. Override the file with
+`PI_CHATBOT_MODELS_FILE` if needed.
+
+The bundled provider (`llamacpp`) points at `http://llama-router.vpn/v1` with no
+API key, so the **only requirement is that the Debian machine can reach that
+router** (e.g. it is on the same VPN). Verify:
+
+```bash
+curl -fsS http://llama-router.vpn/v1/models && echo OK
+```
+
+If your provider needs an API key, set it in `~/.pi/agent/auth.json` (this file
+is not bundled). The default model id and the in-app model list live in
+`lib/ai/models.ts`.
 
 ## Updating
 
