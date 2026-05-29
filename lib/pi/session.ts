@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   AuthStorage,
   createAgentSession,
+  DefaultResourceLoader,
   getAgentDir,
   ModelRegistry,
   SessionManager,
@@ -16,6 +17,18 @@ function splitModelId(modelId: string) {
     provider: modelParts.length > 0 ? provider : "llamacpp",
     modelId: modelParts.length > 0 ? modelParts.join("/") : provider,
   };
+}
+
+/**
+ * Skills that ship with this app (committed under `<repo>/skills`). They are
+ * loaded directly from the repo via the pi resource loader so they travel with
+ * the deployment — no copying into the user's `~/.pi/agent/skills` required.
+ * Override the location with PI_CHATBOT_SKILLS_DIR if the build layout differs.
+ */
+function getBundledSkillPaths() {
+  const skillsRoot =
+    process.env.PI_CHATBOT_SKILLS_DIR ?? path.join(process.cwd(), "skills");
+  return [path.join(skillsRoot, "brave-search")];
 }
 
 export async function createPiSdkSession({
@@ -44,6 +57,13 @@ export async function createPiSdkSession({
     ? SessionManager.open(sessionFilePath, undefined, workspacePath)
     : SessionManager.create(workspacePath);
 
+  const resourceLoader = new DefaultResourceLoader({
+    cwd: workspacePath,
+    agentDir,
+    additionalSkillPaths: getBundledSkillPaths(),
+  });
+  await resourceLoader.reload();
+
   const created = await createAgentSession({
     agentDir,
     authStorage,
@@ -51,6 +71,7 @@ export async function createPiSdkSession({
     model,
     modelRegistry,
     sessionManager,
+    resourceLoader,
   });
 
   return created.session;

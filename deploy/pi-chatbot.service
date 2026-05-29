@@ -1,0 +1,26 @@
+[Unit]
+Description=pi-chatbot (Next.js + Pi coding agent)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# The user/group that owns the checkout and ~/.pi agent config.
+User=__USER__
+Group=__USER__
+# Absolute path to the repository checkout.
+WorkingDirectory=__WORKDIR__
+# next start reads .env.local from WorkingDirectory; BRAVE_API_KEY, AUTH_SECRET,
+# POSTGRES_URL, etc. are picked up from there. Keep .env.local mode 600.
+Environment=NODE_ENV=production
+Environment=PORT=3000
+# Make node/pnpm discoverable to systemd's minimal PATH. Adjust if node lives
+# elsewhere (run `which node pnpm` and prepend that directory).
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=pnpm start
+Restart=on-failure
+RestartSec=5
+# python3 + curl must be on PATH at runtime for the bundled brave-search skill.
+
+[Install]
+WantedBy=multi-user.target
