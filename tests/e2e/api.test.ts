@@ -20,6 +20,18 @@ test.describe("Chat API Integration", () => {
     expect(content?.length).toBeGreaterThan(0);
   });
 
+  test("renders Pi tool blocks", async ({ page }) => {
+    await page.goto("/");
+
+    await page.getByTestId("multimodal-input").fill("Use a tool");
+    await page.getByTestId("send-button").click();
+
+    await expect(page.getByTestId("pi-tool-block").first()).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(page.getByText("read").first()).toBeVisible();
+  });
+
   test("redirects to /chat/:id after sending message", async ({ page }) => {
     await page.goto("/");
 

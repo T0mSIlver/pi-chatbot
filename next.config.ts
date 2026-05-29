@@ -25,6 +25,13 @@ const nextConfig: NextConfig = {
   devIndicators: false,
   poweredByHeader: false,
   reactCompiler: true,
+  serverExternalPackages: [
+    "@mariozechner/pi-coding-agent",
+    "@mariozechner/clipboard",
+  ],
+  turbopack: {
+    root: process.cwd(),
+  },
   logging: {
     fetches: {
       fullUrl: false,

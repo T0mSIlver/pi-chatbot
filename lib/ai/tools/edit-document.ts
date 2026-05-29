@@ -1,12 +1,11 @@
-import { tool, type UIMessageStreamWriter } from "ai";
+import { tool } from "ai";
 import type { Session } from "next-auth";
 import { z } from "zod";
 import { getDocumentById, saveDocument } from "@/lib/db/queries";
-import type { ChatMessage } from "@/lib/types";
 
 type EditDocumentProps = {
   session: Session;
-  dataStream: UIMessageStreamWriter<ChatMessage>;
+  dataStream: any;
 };
 
 export const editDocument = ({ session, dataStream }: EditDocumentProps) =>

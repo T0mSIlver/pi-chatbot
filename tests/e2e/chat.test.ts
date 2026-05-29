@@ -6,6 +6,12 @@ test.describe("Chat Page", () => {
     await expect(page.getByTestId("multimodal-input")).toBeVisible();
   });
 
+  test("project selector is visible", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.getByTestId("project-selector")).toBeVisible();
+    await expect(page.getByText("General")).toBeVisible();
+  });
+
   test("can type in the input field", async ({ page }) => {
     await page.goto("/");
     const input = page.getByTestId("multimodal-input");

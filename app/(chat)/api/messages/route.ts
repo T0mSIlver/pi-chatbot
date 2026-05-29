@@ -1,6 +1,6 @@
 import { auth } from "@/app/(auth)/auth";
-import { getChatById, getMessagesByChatId } from "@/lib/db/queries";
-import { convertToUIMessages } from "@/lib/utils";
+import { getChatById } from "@/lib/db/queries";
+import { readPiSessionMessages } from "@/lib/pi/jsonl";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -10,34 +10,29 @@ export async function GET(request: Request) {
     return Response.json({ error: "chatId required" }, { status: 400 });
   }
 
-  const [session, chat, messages] = await Promise.all([
+  const [session, chat] = await Promise.all([
     auth(),
     getChatById({ id: chatId }),
-    getMessagesByChatId({ id: chatId }),
   ]);
 
   if (!chat) {
     return Response.json({
       messages: [],
-      visibility: "private",
       userId: null,
       isReadonly: false,
     });
   }
 
-  if (
-    chat.visibility === "private" &&
-    (!session?.user || session.user.id !== chat.userId)
-  ) {
+  if (!session?.user || session.user.id !== chat.userId) {
     return Response.json({ error: "forbidden" }, { status: 403 });
   }
 
-  const isReadonly = !session?.user || session.user.id !== chat.userId;
+  const messages = await readPiSessionMessages(chat.piSessionFilePath);
 
   return Response.json({
-    messages: convertToUIMessages(messages),
-    visibility: chat.visibility,
+    messages,
+    projectId: chat.projectId,
     userId: chat.userId,
-    isReadonly,
+    isReadonly: false,
   });
 }

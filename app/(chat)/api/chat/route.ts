@@ -1,347 +1,480 @@
-import { geolocation, ipAddress } from "@vercel/functions";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { ipAddress } from "@vercel/functions";
+import { auth } from "@/app/(auth)/auth";
+import { allowedModelIds, DEFAULT_CHAT_MODEL } from "@/lib/ai/models";
+import { isTestEnvironment } from "@/lib/constants";
 import {
-  convertToModelMessages,
-  createUIMessageStream,
-  createUIMessageStreamResponse,
-  generateId,
-  stepCountIs,
-  streamText,
-} from "ai";
-import { checkBotId } from "botid/server";
-import { after } from "next/server";
-import { createResumableStreamContext } from "resumable-stream";
-import { auth, type UserType } from "@/app/(auth)/auth";
-import { entitlementsByUserType } from "@/lib/ai/entitlements";
-import {
-  allowedModelIds,
-  chatModels,
-  DEFAULT_CHAT_MODEL,
-  getCapabilities,
-} from "@/lib/ai/models";
-import { type RequestHints, systemPrompt } from "@/lib/ai/prompts";
-import { getLanguageModel } from "@/lib/ai/providers";
-import { createDocument } from "@/lib/ai/tools/create-document";
-import { editDocument } from "@/lib/ai/tools/edit-document";
-import { getWeather } from "@/lib/ai/tools/get-weather";
-import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
-import { updateDocument } from "@/lib/ai/tools/update-document";
-import { isProductionEnvironment } from "@/lib/constants";
-import {
-  createStreamId,
   deleteChatById,
   getChatById,
-  getMessageCountByUserId,
-  getMessagesByChatId,
+  getProjectById,
+  getProjectsByUserId,
   saveChat,
-  saveMessages,
+  saveProject,
+  updateChatPiSessionFilePathById,
   updateChatTitleById,
-  updateMessage,
 } from "@/lib/db/queries";
-import type { DBMessage } from "@/lib/db/schema";
+import type { Chat } from "@/lib/db/schema";
 import { ChatbotError } from "@/lib/errors";
+import type { PiStreamEvent } from "@/lib/pi/events";
+import { createPiSdkSession } from "@/lib/pi/session";
+import {
+  ensureConversationWorkspace,
+  ensureProjectWorkspace,
+  getConversationWorkspacePath,
+  getProjectWorkspacePath,
+  moveWorkspaceToTrash,
+} from "@/lib/pi/workspace";
 import { checkIpRateLimit } from "@/lib/ratelimit";
-import type { ChatMessage } from "@/lib/types";
-import { convertToUIMessages, generateUUID } from "@/lib/utils";
-import { generateTitleFromUserMessage } from "../../actions";
+import { generateUUID, getTextFromMessage } from "@/lib/utils";
 import { type PostRequestBody, postRequestBodySchema } from "./schema";
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
-function getStreamContext() {
-  try {
-    return createResumableStreamContext({ waitUntil: after });
-  } catch (_) {
-    return null;
-  }
+declare global {
+  // eslint-disable-next-line no-var
+  var __piConversationLocks: Set<string> | undefined;
 }
 
-export { getStreamContext };
+const locks = globalThis.__piConversationLocks ?? new Set<string>();
+globalThis.__piConversationLocks = locks;
+
+function titleFromMessage(message: PostRequestBody["message"]) {
+  return (
+    getTextFromMessage(message)
+      .replace(/^[#*"\s]+/, "")
+      .replace(/["]+$/, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 80) || "New conversation"
+  );
+}
+
+function writeNdjson(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  encoder: TextEncoder,
+  event: PiStreamEvent
+) {
+  controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+}
+
+function contentToText(content: unknown) {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content
+    .filter(
+      (block): block is { type: string; text?: string } =>
+        typeof block === "object" && block !== null && "type" in block
+    )
+    .filter((block) => block.type === "text" && typeof block.text === "string")
+    .map((block) => block.text)
+    .join("");
+}
+
+function previewToolOutput(value: unknown) {
+  const text =
+    typeof value === "string" ? value : JSON.stringify(value ?? "", null, 2);
+  if (text.length <= 8000) {
+    return value;
+  }
+  return `${text.slice(0, 8000)}\n\n[truncated for display]`;
+}
+
+async function getOrCreateProject(userId: string, requestedProjectId?: string) {
+  if (requestedProjectId) {
+    const project = await getProjectById({ id: requestedProjectId });
+    if (!project) {
+      throw new ChatbotError("not_found:chat");
+    }
+    if (project.userId !== userId) {
+      throw new ChatbotError("forbidden:chat");
+    }
+    await ensureProjectWorkspace({ userId, projectId: project.id });
+    return project;
+  }
+
+  const projects = await getProjectsByUserId({ userId });
+  if (projects[0]) {
+    await ensureProjectWorkspace({ userId, projectId: projects[0].id });
+    return projects[0];
+  }
+
+  const id = generateUUID();
+  await ensureProjectWorkspace({ userId, projectId: id });
+  return saveProject({
+    id,
+    userId,
+    name: "General",
+    workspacePath: getProjectWorkspacePath(userId, id),
+  });
+}
+
+async function imagePartToPiImage(part: { url: string; mediaType: string }) {
+  const response = await fetch(part.url);
+  if (!response.ok) {
+    return null;
+  }
+  const bytes = Buffer.from(await response.arrayBuffer());
+  return {
+    type: "image" as const,
+    data: bytes.toString("base64"),
+    mimeType: part.mediaType,
+  };
+}
+
+type RequestMessagePart = PostRequestBody["message"]["parts"][number];
+
+function isImageFilePart(
+  part: RequestMessagePart
+): part is Extract<RequestMessagePart, { type: "file" }> {
+  return part.type === "file" && part.mediaType.startsWith("image/");
+}
+
+async function buildPiUserContent(message: PostRequestBody["message"]) {
+  const text = getTextFromMessage(message);
+  const images = (
+    await Promise.all(
+      message.parts
+        .filter(isImageFilePart)
+        .map((part) => imagePartToPiImage(part))
+    )
+  ).filter((image) => image !== null);
+
+  if (images.length === 0) {
+    return text;
+  }
+
+  return [{ type: "text" as const, text }, ...images];
+}
+
+function createConversationMetadata({
+  id,
+  userId,
+  projectId,
+  title,
+  piSessionFilePath,
+}: {
+  id: string;
+  userId: string;
+  projectId: string;
+  title: string;
+  piSessionFilePath: string;
+}) {
+  return saveChat({
+    id,
+    userId,
+    projectId,
+    title,
+    workspacePath: getConversationWorkspacePath({
+      userId,
+      projectId,
+      conversationId: id,
+    }),
+    piSessionFilePath,
+  });
+}
+
+async function runMockPiTurn({
+  chat,
+  message,
+  title,
+  controller,
+  encoder,
+}: {
+  chat: Chat;
+  message: PostRequestBody["message"];
+  title: string | null;
+  controller: ReadableStreamDefaultController<Uint8Array>;
+  encoder: TextEncoder;
+}) {
+  const sessionFilePath = chat.piSessionFilePath;
+  const timestamp = new Date().toISOString();
+  const text = "This is a mocked Pi response for tests.";
+  const userText = getTextFromMessage(message);
+
+  await mkdir(path.dirname(sessionFilePath), { recursive: true });
+  await writeFile(
+    sessionFilePath,
+    `${[
+      JSON.stringify({
+        type: "session",
+        version: 3,
+        id: chat.id,
+        timestamp,
+        cwd: chat.workspacePath,
+      }),
+      JSON.stringify({
+        type: "message",
+        id: message.id,
+        parentId: null,
+        timestamp,
+        message: { role: "user", content: userText, timestamp: Date.now() },
+      }),
+      JSON.stringify({
+        type: "message",
+        id: generateUUID(),
+        parentId: message.id,
+        timestamp,
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text }],
+          timestamp: Date.now(),
+        },
+      }),
+    ].join("\n")}\n`
+  );
+
+  if (title) {
+    writeNdjson(controller, encoder, { type: "title", title });
+  }
+  writeNdjson(controller, encoder, {
+    type: "tool-start",
+    toolCallId: "mock-tool",
+    toolName: "read",
+    input: { path: "README.md" },
+  });
+  writeNdjson(controller, encoder, {
+    type: "tool-end",
+    toolCallId: "mock-tool",
+    toolName: "read",
+    output: "mock tool output",
+    isError: false,
+  });
+  writeNdjson(controller, encoder, { type: "text-delta", delta: text });
+  writeNdjson(controller, encoder, { type: "done", sessionFilePath });
+}
 
 export async function POST(request: Request) {
   let requestBody: PostRequestBody;
 
   try {
-    const json = await request.json();
-    requestBody = postRequestBodySchema.parse(json);
+    requestBody = postRequestBodySchema.parse(await request.json());
   } catch (_) {
     return new ChatbotError("bad_request:api").toResponse();
   }
 
+  const session = await auth();
+
+  if (!session?.user) {
+    return new ChatbotError("unauthorized:chat").toResponse();
+  }
+
+  if (locks.has(requestBody.id)) {
+    return Response.json(
+      {
+        code: "conversation_busy",
+        message: "Conversation is already running.",
+      },
+      { status: 409 }
+    );
+  }
+
+  await checkIpRateLimit(ipAddress(request));
+
+  const selectedChatModel = allowedModelIds.has(requestBody.selectedChatModel)
+    ? requestBody.selectedChatModel
+    : DEFAULT_CHAT_MODEL;
+
+  locks.add(requestBody.id);
+
   try {
-    const { id, message, messages, selectedChatModel, selectedVisibilityType } =
-      requestBody;
-
-    const [, session] = await Promise.all([
-      checkBotId().catch(() => null),
-      auth(),
-    ]);
-
-    if (!session?.user) {
-      return new ChatbotError("unauthorized:chat").toResponse();
-    }
-
-    const chatModel = allowedModelIds.has(selectedChatModel)
-      ? selectedChatModel
-      : DEFAULT_CHAT_MODEL;
-
-    await checkIpRateLimit(ipAddress(request));
-
-    const userType: UserType = session.user.type;
-
-    const messageCount = await getMessageCountByUserId({
-      id: session.user.id,
-      differenceInHours: 1,
-    });
-
-    if (messageCount > entitlementsByUserType[userType].maxMessagesPerHour) {
-      return new ChatbotError("rate_limit:chat").toResponse();
-    }
-
-    const isToolApprovalFlow = Boolean(messages);
-
-    const chat = await getChatById({ id });
-    let messagesFromDb: DBMessage[] = [];
-    let titlePromise: Promise<string> | null = null;
+    let chat = await getChatById({ id: requestBody.id });
+    let title: string | null = null;
 
     if (chat) {
       if (chat.userId !== session.user.id) {
+        locks.delete(requestBody.id);
         return new ChatbotError("forbidden:chat").toResponse();
       }
-      messagesFromDb = await getMessagesByChatId({ id });
-    } else if (message?.role === "user") {
-      await saveChat({
-        id,
-        userId: session.user.id,
-        title: "New chat",
-        visibility: selectedVisibilityType,
-      });
-      titlePromise = generateTitleFromUserMessage({ message });
-    }
-
-    let uiMessages: ChatMessage[];
-
-    if (isToolApprovalFlow && messages) {
-      const dbMessages = convertToUIMessages(messagesFromDb);
-      const approvalStates = new Map(
-        messages.flatMap(
-          (m) =>
-            m.parts
-              ?.filter(
-                (p: Record<string, unknown>) =>
-                  p.state === "approval-responded" ||
-                  p.state === "output-denied"
-              )
-              .map((p: Record<string, unknown>) => [
-                String(p.toolCallId ?? ""),
-                p,
-              ]) ?? []
-        )
-      );
-      uiMessages = dbMessages.map((msg) => ({
-        ...msg,
-        parts: msg.parts.map((part) => {
-          if (
-            "toolCallId" in part &&
-            approvalStates.has(String(part.toolCallId))
-          ) {
-            return { ...part, ...approvalStates.get(String(part.toolCallId)) };
-          }
-          return part;
-        }),
-      })) as ChatMessage[];
     } else {
-      uiMessages = [
-        ...convertToUIMessages(messagesFromDb),
-        message as ChatMessage,
-      ];
-    }
-
-    const { longitude, latitude, city, country } = geolocation(request);
-
-    const requestHints: RequestHints = {
-      longitude,
-      latitude,
-      city,
-      country,
-    };
-
-    if (message?.role === "user") {
-      await saveMessages({
-        messages: [
-          {
-            chatId: id,
-            id: message.id,
-            role: "user",
-            parts: message.parts,
-            attachments: [],
-            createdAt: new Date(),
-          },
-        ],
+      const project = await getOrCreateProject(
+        session.user.id,
+        requestBody.projectId
+      );
+      const workspace = await ensureConversationWorkspace({
+        userId: session.user.id,
+        projectId: project.id,
+        conversationId: requestBody.id,
       });
+
+      title = titleFromMessage(requestBody.message);
+
+      if (isTestEnvironment) {
+        chat = await createConversationMetadata({
+          id: requestBody.id,
+          userId: session.user.id,
+          projectId: project.id,
+          title,
+          piSessionFilePath: path.join(
+            workspace.conversationPath,
+            "pi-session.jsonl"
+          ),
+        });
+      } else {
+        const piSession = await createPiSdkSession({
+          workspacePath: workspace.conversationPath,
+          selectedModelId: selectedChatModel,
+        });
+        chat = await createConversationMetadata({
+          id: requestBody.id,
+          userId: session.user.id,
+          projectId: project.id,
+          title,
+          piSessionFilePath: piSession.sessionFile ?? "",
+        });
+        piSession.dispose();
+      }
     }
 
-    const modelConfig = chatModels.find((m) => m.id === chatModel);
-    const modelCapabilities = await getCapabilities();
-    const capabilities = modelCapabilities[chatModel];
-    const isReasoningModel = capabilities?.reasoning === true;
-    const supportsTools = capabilities?.tools === true;
+    if (!chat) {
+      locks.delete(requestBody.id);
+      return new ChatbotError("bad_request:api").toResponse();
+    }
 
-    const modelMessages = await convertToModelMessages(uiMessages);
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const encoder = new TextEncoder();
+        let piSession: Awaited<ReturnType<typeof createPiSdkSession>> | null =
+          null;
+        let unsubscribe: (() => void) | null = null;
+        const abort = () => {
+          piSession?.abort().catch(() => undefined);
+        };
 
-    const stream = createUIMessageStream({
-      originalMessages: isToolApprovalFlow ? uiMessages : undefined,
-      execute: async ({ writer: dataStream }) => {
-        const result = streamText({
-          model: getLanguageModel(chatModel),
-          system: systemPrompt({ requestHints, supportsTools }),
-          messages: modelMessages,
-          stopWhen: stepCountIs(5),
-          experimental_activeTools:
-            isReasoningModel && !supportsTools
-              ? []
-              : [
-                  "getWeather",
-                  "createDocument",
-                  "editDocument",
-                  "updateDocument",
-                  "requestSuggestions",
-                ],
-          providerOptions: {
-            ...(modelConfig?.gatewayOrder && {
-              gateway: { order: modelConfig.gatewayOrder },
-            }),
-            ...(modelConfig?.reasoningEffort && {
-              openai: { reasoningEffort: modelConfig.reasoningEffort },
-            }),
-          },
-          tools: {
-            getWeather,
-            createDocument: createDocument({
-              session,
-              dataStream,
-              modelId: chatModel,
-            }),
-            editDocument: editDocument({ dataStream, session }),
-            updateDocument: updateDocument({
-              session,
-              dataStream,
-              modelId: chatModel,
-            }),
-            requestSuggestions: requestSuggestions({
-              session,
-              dataStream,
-              modelId: chatModel,
-            }),
-          },
-          experimental_telemetry: {
-            isEnabled: isProductionEnvironment,
-            functionId: "stream-text",
-          },
-        });
-
-        dataStream.merge(
-          result.toUIMessageStream({ sendReasoning: isReasoningModel })
-        );
-
-        if (titlePromise) {
-          try {
-            const title = await titlePromise;
-            dataStream.write({ type: "data-chat-title", data: title });
-            updateChatTitleById({ chatId: id, title });
-          } catch (_) {
-            /* non-fatal */
+        try {
+          if (isTestEnvironment) {
+            await runMockPiTurn({
+              chat,
+              message: requestBody.message,
+              title,
+              controller,
+              encoder,
+            });
+            controller.close();
+            return;
           }
-        }
-      },
-      generateId: generateUUID,
-      onFinish: async ({ messages: finishedMessages }) => {
-        if (isToolApprovalFlow) {
-          for (const finishedMsg of finishedMessages) {
-            const existingMsg = uiMessages.find((m) => m.id === finishedMsg.id);
-            if (existingMsg) {
-              await updateMessage({
-                id: finishedMsg.id,
-                parts: finishedMsg.parts,
-              });
-            } else {
-              await saveMessages({
-                messages: [
-                  {
-                    id: finishedMsg.id,
-                    role: finishedMsg.role,
-                    parts: finishedMsg.parts,
-                    createdAt: new Date(),
-                    attachments: [],
-                    chatId: id,
-                  },
-                ],
+
+          piSession = await createPiSdkSession({
+            workspacePath: chat.workspacePath,
+            sessionFilePath: chat.piSessionFilePath,
+            selectedModelId: selectedChatModel,
+          });
+
+          if (
+            piSession.sessionFile &&
+            piSession.sessionFile !== chat.piSessionFilePath
+          ) {
+            await updateChatPiSessionFilePathById({
+              chatId: chat.id,
+              piSessionFilePath: piSession.sessionFile,
+            });
+          }
+
+          request.signal.addEventListener("abort", abort, { once: true });
+
+          unsubscribe = piSession.subscribe((event) => {
+            if (
+              event.type === "message_update" &&
+              event.assistantMessageEvent.type === "text_delta"
+            ) {
+              writeNdjson(controller, encoder, {
+                type: "text-delta",
+                delta: event.assistantMessageEvent.delta,
               });
             }
-          }
-        } else if (finishedMessages.length > 0) {
-          await saveMessages({
-            messages: finishedMessages.map((currentMessage) => ({
-              id: currentMessage.id,
-              role: currentMessage.role,
-              parts: currentMessage.parts,
-              createdAt: new Date(),
-              attachments: [],
-              chatId: id,
-            })),
+
+            if (
+              event.type === "message_update" &&
+              event.assistantMessageEvent.type === "thinking_delta"
+            ) {
+              writeNdjson(controller, encoder, {
+                type: "thinking-delta",
+                delta: event.assistantMessageEvent.delta,
+              });
+            }
+
+            if (event.type === "tool_execution_start") {
+              writeNdjson(controller, encoder, {
+                type: "tool-start",
+                toolCallId: event.toolCallId,
+                toolName: event.toolName,
+                input: event.args,
+              });
+            }
+
+            if (event.type === "tool_execution_update") {
+              writeNdjson(controller, encoder, {
+                type: "tool-update",
+                toolCallId: event.toolCallId,
+                toolName: event.toolName,
+                output: previewToolOutput(event.partialResult),
+              });
+            }
+
+            if (event.type === "tool_execution_end") {
+              const text = contentToText(event.result?.content);
+              writeNdjson(controller, encoder, {
+                type: "tool-end",
+                toolCallId: event.toolCallId,
+                toolName: event.toolName,
+                output: previewToolOutput(event.result?.details ?? text),
+                errorText: event.isError ? text || "Tool failed" : undefined,
+                isError: event.isError,
+              });
+            }
           });
+
+          if (title) {
+            await updateChatTitleById({ chatId: chat.id, title });
+            writeNdjson(controller, encoder, { type: "title", title });
+          }
+
+          await piSession.sendUserMessage(
+            await buildPiUserContent(requestBody.message)
+          );
+
+          writeNdjson(controller, encoder, {
+            type: "done",
+            sessionFilePath: piSession.sessionFile,
+          });
+          controller.close();
+        } catch (error) {
+          writeNdjson(controller, encoder, {
+            type: "error",
+            message:
+              error instanceof Error ? error.message : "Pi failed to respond.",
+          });
+          controller.close();
+        } finally {
+          unsubscribe?.();
+          request.signal.removeEventListener("abort", abort);
+          piSession?.dispose();
+          locks.delete(requestBody.id);
         }
       },
-      onError: (error) => {
-        if (
-          error instanceof Error &&
-          error.message?.includes(
-            "AI Gateway requires a valid credit card on file to service requests"
-          )
-        ) {
-          return "AI Gateway requires a valid credit card on file to service requests. Please visit https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai%3Fmodal%3Dadd-credit-card to add a card and unlock your free credits.";
-        }
-        return "Oops, an error occurred!";
+      cancel() {
+        locks.delete(requestBody.id);
       },
     });
 
-    return createUIMessageStreamResponse({
-      stream,
-      async consumeSseStream({ stream: sseStream }) {
-        if (!process.env.REDIS_URL) {
-          return;
-        }
-        try {
-          const streamContext = getStreamContext();
-          if (streamContext) {
-            const streamId = generateId();
-            await createStreamId({ streamId, chatId: id });
-            await streamContext.createNewResumableStream(
-              streamId,
-              () => sseStream
-            );
-          }
-        } catch (_) {
-          /* non-critical */
-        }
+    return new Response(stream, {
+      headers: {
+        "Cache-Control": "no-cache",
+        "Content-Type": "application/x-ndjson; charset=utf-8",
       },
     });
   } catch (error) {
-    const vercelId = request.headers.get("x-vercel-id");
+    locks.delete(requestBody.id);
 
     if (error instanceof ChatbotError) {
       return error.toResponse();
     }
 
-    if (
-      error instanceof Error &&
-      error.message?.includes(
-        "AI Gateway requires a valid credit card on file to service requests"
-      )
-    ) {
-      return new ChatbotError("bad_request:activate_gateway").toResponse();
-    }
-
-    console.error("Unhandled error in chat API:", error, { vercelId });
+    console.error("Unhandled error in Pi chat API:", error);
     return new ChatbotError("offline:chat").toResponse();
   }
 }
@@ -362,11 +495,19 @@ export async function DELETE(request: Request) {
 
   const chat = await getChatById({ id });
 
-  if (chat?.userId !== session.user.id) {
+  if (!chat) {
+    return new ChatbotError("not_found:chat").toResponse();
+  }
+
+  if (chat.userId !== session.user.id) {
     return new ChatbotError("forbidden:chat").toResponse();
   }
 
   const deletedChat = await deleteChatById({ id });
+
+  if (deletedChat) {
+    await moveWorkspaceToTrash(deletedChat.workspacePath);
+  }
 
   return Response.json(deletedChat, { status: 200 });
 }

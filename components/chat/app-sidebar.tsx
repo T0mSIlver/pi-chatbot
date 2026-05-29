@@ -12,11 +12,8 @@ import type { User } from "next-auth";
 import { useState } from "react";
 import { toast } from "sonner";
 import { useSWRConfig } from "swr";
-import { unstable_serialize } from "swr/infinite";
-import {
-  getChatHistoryPaginationKey,
-  SidebarHistory,
-} from "@/components/chat/sidebar-history";
+import { ProjectSelector } from "@/components/chat/project-selector";
+import { SidebarHistory } from "@/components/chat/sidebar-history";
 import { SidebarUserNav } from "@/components/chat/sidebar-user-nav";
 import {
   Sidebar,
@@ -53,9 +50,7 @@ export function AppSidebar({ user }: { user: User | undefined }) {
   const handleDeleteAll = () => {
     setShowDeleteAllDialog(false);
     router.replace("/");
-    mutate(unstable_serialize(getChatHistoryPaginationKey), [], {
-      revalidate: false,
-    });
+    mutate((key) => typeof key === "string" && key.includes("/api/history"));
 
     fetch(`${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/history`, {
       method: "DELETE",
@@ -132,6 +127,7 @@ export function AppSidebar({ user }: { user: User | undefined }) {
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
+          {user && <ProjectSelector />}
           <SidebarHistory user={user} />
         </SidebarContent>
         <SidebarFooter className="border-t border-sidebar-border pt-2 pb-3">
@@ -148,8 +144,8 @@ export function AppSidebar({ user }: { user: User | undefined }) {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete all chats?</AlertDialogTitle>
             <AlertDialogDescription>
-              This action cannot be undone. This will permanently delete all
-              your chats and remove them from our servers.
+              This will remove your chat metadata and move the workspaces to
+              local trash.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

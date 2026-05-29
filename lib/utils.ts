@@ -1,13 +1,9 @@
-import type {
-  UIMessage,
-  UIMessagePart,
-} from 'ai';
 import { type ClassValue, clsx } from 'clsx';
 import { formatISO } from 'date-fns';
 import { twMerge } from 'tailwind-merge';
 import type { DBMessage, Document } from '@/lib/db/schema';
 import { ChatbotError, type ErrorCode } from './errors';
-import type { ChatMessage, ChatTools, CustomUIDataTypes } from './types';
+import type { ChatMessage, ChatMessagePart } from './types';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -72,14 +68,14 @@ export function convertToUIMessages(messages: DBMessage[]): ChatMessage[] {
   return messages.map((message) => ({
     id: message.id,
     role: message.role as 'user' | 'assistant' | 'system',
-    parts: message.parts as UIMessagePart<CustomUIDataTypes, ChatTools>[],
+    parts: message.parts as ChatMessagePart[],
     metadata: {
       createdAt: formatISO(message.createdAt),
     },
   }));
 }
 
-export function getTextFromMessage(message: ChatMessage | UIMessage): string {
+export function getTextFromMessage(message: ChatMessage): string {
   return message.parts
     .filter((part) => part.type === 'text')
     .map((part) => (part as { type: 'text'; text: string}).text)

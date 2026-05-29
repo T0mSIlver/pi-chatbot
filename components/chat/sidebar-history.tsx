@@ -24,6 +24,7 @@ import {
   SidebarMenu,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { useProjects } from "@/hooks/use-projects";
 import type { Chat } from "@/lib/db/schema";
 import { fetcher } from "@/lib/utils";
 import { LoaderIcon } from "./icons";
@@ -79,14 +80,17 @@ const groupChatsByDate = (chats: Chat[]): GroupedChats => {
 
 export function getChatHistoryPaginationKey(
   pageIndex: number,
-  previousPageData: ChatHistory
+  previousPageData: ChatHistory,
+  projectId?: string | null
 ) {
   if (previousPageData && previousPageData.hasMore === false) {
     return null;
   }
 
+  const projectParam = projectId ? `&projectId=${projectId}` : "";
+
   if (pageIndex === 0) {
-    return `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/history?limit=${PAGE_SIZE}`;
+    return `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/history?limit=${PAGE_SIZE}${projectParam}`;
   }
 
   const firstChatFromPage = previousPageData.chats.at(-1);
@@ -95,11 +99,12 @@ export function getChatHistoryPaginationKey(
     return null;
   }
 
-  return `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/history?ending_before=${firstChatFromPage.id}&limit=${PAGE_SIZE}`;
+  return `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/history?ending_before=${firstChatFromPage.id}&limit=${PAGE_SIZE}${projectParam}`;
 }
 
 export function SidebarHistory({ user }: { user: User | undefined }) {
   const { setOpenMobile } = useSidebar();
+  const { selectedProjectId } = useProjects();
   const pathname = usePathname();
   const id = pathname?.startsWith("/chat/") ? pathname.split("/")[2] : null;
 
@@ -110,7 +115,14 @@ export function SidebarHistory({ user }: { user: User | undefined }) {
     isLoading,
     mutate,
   } = useSWRInfinite<ChatHistory>(
-    user ? getChatHistoryPaginationKey : () => null,
+    user && selectedProjectId
+      ? (pageIndex, previousPageData) =>
+          getChatHistoryPaginationKey(
+            pageIndex,
+            previousPageData,
+            selectedProjectId
+          )
+      : () => null,
     fetcher,
     { fallbackData: [], revalidateOnFocus: false }
   );

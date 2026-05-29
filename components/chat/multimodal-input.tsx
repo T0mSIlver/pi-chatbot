@@ -1,7 +1,5 @@
 "use client";
 
-import type { UseChatHelpers } from "@ai-sdk/react";
-import type { UIMessage } from "ai";
 import equal from "fast-deep-equal";
 import {
   ArrowUpIcon,
@@ -42,7 +40,13 @@ import {
   DEFAULT_CHAT_MODEL,
   type ModelCapabilities,
 } from "@/lib/ai/models";
-import type { Attachment, ChatMessage } from "@/lib/types";
+import type {
+  Attachment,
+  ChatMessage,
+  ChatStatus,
+  SendMessage,
+  SetMessages,
+} from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
   PromptInput,
@@ -60,7 +64,6 @@ import {
   slashCommands,
 } from "./slash-commands";
 import { SuggestedActions } from "./suggested-actions";
-import type { VisibilityType } from "./visibility-selector";
 
 function setCookie(name: string, value: string) {
   const maxAge = 60 * 60 * 24 * 365;
@@ -80,31 +83,23 @@ function PureMultimodalInput({
   setMessages,
   sendMessage,
   className,
-  selectedVisibilityType,
   selectedModelId,
   onModelChange,
-  editingMessage,
-  onCancelEdit,
   isLoading,
 }: {
   chatId: string;
   input: string;
   setInput: Dispatch<SetStateAction<string>>;
-  status: UseChatHelpers<ChatMessage>["status"];
+  status: ChatStatus;
   stop: () => void;
   attachments: Attachment[];
   setAttachments: Dispatch<SetStateAction<Attachment[]>>;
-  messages: UIMessage[];
-  setMessages: UseChatHelpers<ChatMessage>["setMessages"];
-  sendMessage:
-    | UseChatHelpers<ChatMessage>["sendMessage"]
-    | (() => Promise<void>);
+  messages: ChatMessage[];
+  setMessages: SetMessages;
+  sendMessage: SendMessage;
   className?: string;
-  selectedVisibilityType: VisibilityType;
   selectedModelId: string;
   onModelChange?: (modelId: string) => void;
-  editingMessage?: ChatMessage | null;
-  onCancelEdit?: () => void;
   isLoading?: boolean;
 }) {
   const router = useRouter();
@@ -370,32 +365,11 @@ function PureMultimodalInput({
 
   return (
     <div className={cn("relative flex w-full flex-col gap-4", className)}>
-      {editingMessage && onCancelEdit && (
-        <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
-          <span>Editing message</span>
-          <button
-            className="rounded px-1.5 py-0.5 text-muted-foreground/50 transition-colors hover:bg-muted hover:text-foreground"
-            onMouseDown={(e) => {
-              e.preventDefault();
-              onCancelEdit();
-            }}
-            type="button"
-          >
-            Cancel
-          </button>
-        </div>
-      )}
-
-      {!editingMessage &&
-        !isLoading &&
+      {!isLoading &&
         messages.length === 0 &&
         attachments.length === 0 &&
         uploadQueue.length === 0 && (
-          <SuggestedActions
-            chatId={chatId}
-            selectedVisibilityType={selectedVisibilityType}
-            sendMessage={sendMessage}
-          />
+          <SuggestedActions chatId={chatId} sendMessage={sendMessage} />
         )}
 
       <input
@@ -504,14 +478,8 @@ function PureMultimodalInput({
                 return;
               }
             }
-            if (e.key === "Escape" && editingMessage && onCancelEdit) {
-              e.preventDefault();
-              onCancelEdit();
-            }
           }}
-          placeholder={
-            editingMessage ? "Edit your message..." : "Ask anything..."
-          }
+          placeholder="Ask anything..."
           ref={textareaRef}
           value={input}
         />
@@ -564,13 +532,7 @@ export const MultimodalInput = memo(
     if (!equal(prevProps.attachments, nextProps.attachments)) {
       return false;
     }
-    if (prevProps.selectedVisibilityType !== nextProps.selectedVisibilityType) {
-      return false;
-    }
     if (prevProps.selectedModelId !== nextProps.selectedModelId) {
-      return false;
-    }
-    if (prevProps.editingMessage !== nextProps.editingMessage) {
       return false;
     }
     if (prevProps.isLoading !== nextProps.isLoading) {
@@ -590,7 +552,7 @@ function PureAttachmentsButton({
   selectedModelId,
 }: {
   fileInputRef: React.MutableRefObject<HTMLInputElement | null>;
-  status: UseChatHelpers<ChatMessage>["status"];
+  status: ChatStatus;
   selectedModelId: string;
 }) {
   const { data: modelsResponse } = useSWR(
@@ -796,7 +758,7 @@ function PureStopButton({
   setMessages,
 }: {
   stop: () => void;
-  setMessages: UseChatHelpers<ChatMessage>["setMessages"];
+  setMessages: SetMessages;
 }) {
   return (
     <Button

@@ -1,15 +1,14 @@
-import { Output, streamText, tool, type UIMessageStreamWriter } from "ai";
+import { Output, streamText, tool } from "ai";
 import type { Session } from "next-auth";
 import { z } from "zod";
 import { getDocumentById, saveSuggestions } from "@/lib/db/queries";
 import type { Suggestion } from "@/lib/db/schema";
-import type { ChatMessage } from "@/lib/types";
 import { generateUUID } from "@/lib/utils";
 import { getLanguageModel } from "../providers";
 
 type RequestSuggestionsProps = {
   session: Session;
-  dataStream: UIMessageStreamWriter<ChatMessage>;
+  dataStream: any;
   modelId: string;
 };
 
