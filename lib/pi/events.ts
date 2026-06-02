@@ -4,6 +4,18 @@ export type PiStreamEvent =
   | { type: "text-delta"; delta: string }
   | { type: "thinking-delta"; delta: string }
   | {
+      type: "tool-input-start";
+      toolCallId: string;
+      toolName: string;
+      inputText?: string;
+    }
+  | {
+      type: "tool-input-delta";
+      toolCallId: string;
+      toolName: string;
+      inputText: string;
+    }
+  | {
       type: "tool-start";
       toolCallId: string;
       toolName: string;

@@ -70,14 +70,56 @@ function updateAssistantMessage(
       mergeThinkingDelta(next, event.delta);
     }
 
+    if (event.type === "tool-input-start") {
+      const toolPart = findToolPart(next, event.toolCallId);
+      if (toolPart) {
+        toolPart.state = "input-streaming";
+        toolPart.toolName = event.toolName;
+        toolPart.inputText = event.inputText ?? "";
+      } else {
+        next.parts.push({
+          type: "tool-pi",
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          state: "input-streaming",
+          inputText: event.inputText ?? "",
+        });
+      }
+    }
+
+    if (event.type === "tool-input-delta") {
+      const toolPart = findToolPart(next, event.toolCallId);
+      if (toolPart) {
+        toolPart.state = "input-streaming";
+        toolPart.toolName = event.toolName;
+        toolPart.inputText = event.inputText;
+      } else {
+        next.parts.push({
+          type: "tool-pi",
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          state: "input-streaming",
+          inputText: event.inputText,
+        });
+      }
+    }
+
     if (event.type === "tool-start") {
-      next.parts.push({
-        type: "tool-pi",
-        toolCallId: event.toolCallId,
-        toolName: event.toolName,
-        state: "input-available",
-        input: event.input,
-      });
+      const toolPart = findToolPart(next, event.toolCallId);
+      if (toolPart) {
+        toolPart.state = "input-available";
+        toolPart.toolName = event.toolName;
+        toolPart.input = event.input;
+        toolPart.inputText = undefined;
+      } else {
+        next.parts.push({
+          type: "tool-pi",
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          state: "input-available",
+          input: event.input,
+        });
+      }
     }
 
     if (event.type === "tool-update") {
@@ -212,7 +254,13 @@ export function usePiChat() {
     if (chatData?.projectId) {
       setSelectedProjectId(chatData.projectId);
     }
-  }, [chatData?.messages, chatData?.projectId, chatId, isNewChat, setSelectedProjectId]);
+  }, [
+    chatData?.messages,
+    chatData?.projectId,
+    chatId,
+    isNewChat,
+    setSelectedProjectId,
+  ]);
 
   const refreshHistory = useCallback(() => {
     mutate((key) => typeof key === "string" && key.includes("/api/history"));
@@ -301,7 +349,14 @@ export function usePiChat() {
         abortControllerRef.current = null;
       }
     },
-    [chatId, currentModelId, messagesKey, mutate, refreshHistory, selectedProjectId]
+    [
+      chatId,
+      currentModelId,
+      messagesKey,
+      mutate,
+      refreshHistory,
+      selectedProjectId,
+    ]
   );
 
   const stop = useCallback(() => {

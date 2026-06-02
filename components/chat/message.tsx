@@ -118,7 +118,7 @@ const PurePreviewMessage = ({
 
       return (
         <Tool
-          className="w-[min(100%,560px)]"
+          className="w-[min(100%,760px)]"
           data-testid="pi-tool-block"
           defaultOpen={isOpen}
           key={toolPart.toolCallId}
@@ -129,8 +129,12 @@ const PurePreviewMessage = ({
             type="dynamic-tool"
           />
           <ToolContent>
-            {toolPart.input !== undefined && (
-              <ToolInput input={toolPart.input} />
+            {(toolPart.input !== undefined ||
+              toolPart.inputText !== undefined) && (
+              <ToolInput
+                input={toolPart.input}
+                inputText={toolPart.inputText}
+              />
             )}
             {(toolPart.output !== undefined || toolPart.errorText) && (
               <ToolOutput

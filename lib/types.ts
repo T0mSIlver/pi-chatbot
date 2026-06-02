@@ -33,8 +33,13 @@ export type PiToolUIPart = {
   type: "tool-pi";
   toolCallId: string;
   toolName: string;
-  state: "input-available" | "output-available" | "output-error";
+  state:
+    | "input-streaming"
+    | "input-available"
+    | "output-available"
+    | "output-error";
   input?: unknown;
+  inputText?: string;
   output?: unknown;
   errorText?: string;
   isError?: boolean;

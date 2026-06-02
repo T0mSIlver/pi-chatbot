@@ -84,6 +84,53 @@ function previewToolOutput(value: unknown) {
   return `${text.slice(0, 8000)}\n\n[truncated for display]`;
 }
 
+type StreamingToolCall = {
+  toolCallId: string;
+  toolName: string;
+  inputText: string;
+};
+
+function getAssistantToolCallBlock(event: unknown) {
+  if (typeof event !== "object" || event === null) {
+    return null;
+  }
+
+  const contentIndex =
+    "contentIndex" in event && typeof event.contentIndex === "number"
+      ? event.contentIndex
+      : undefined;
+  const partial = "partial" in event ? event.partial : undefined;
+
+  if (
+    typeof partial !== "object" ||
+    partial === null ||
+    !("content" in partial) ||
+    !Array.isArray(partial.content) ||
+    contentIndex === undefined
+  ) {
+    return null;
+  }
+
+  const block = partial.content[contentIndex];
+  if (
+    typeof block !== "object" ||
+    block === null ||
+    !("type" in block) ||
+    block.type !== "toolCall"
+  ) {
+    return null;
+  }
+
+  return {
+    contentIndex,
+    id: "id" in block && typeof block.id === "string" ? block.id : undefined,
+    name:
+      "name" in block && typeof block.name === "string"
+        ? block.name
+        : undefined,
+  };
+}
+
 async function getOrCreateProject(userId: string, requestedProjectId?: string) {
   if (requestedProjectId) {
     const project = await getProjectById({ id: requestedProjectId });
@@ -376,6 +423,8 @@ export async function POST(request: Request) {
 
           request.signal.addEventListener("abort", abort, { once: true });
 
+          const streamingToolCalls = new Map<string, StreamingToolCall>();
+
           unsubscribe = piSession.subscribe((event) => {
             if (
               event.type === "message_update" &&
@@ -395,6 +444,75 @@ export async function POST(request: Request) {
                 type: "thinking-delta",
                 delta: event.assistantMessageEvent.delta,
               });
+            }
+
+            if (
+              event.type === "message_update" &&
+              event.assistantMessageEvent.type === "toolcall_start"
+            ) {
+              const block = getAssistantToolCallBlock(
+                event.assistantMessageEvent
+              );
+              if (block) {
+                const toolCallId = block.id ?? `tool-${block.contentIndex}`;
+                const toolName = block.name ?? "tool";
+                streamingToolCalls.set(String(block.contentIndex), {
+                  toolCallId,
+                  toolName,
+                  inputText: "",
+                });
+                writeNdjson(controller, encoder, {
+                  type: "tool-input-start",
+                  toolCallId,
+                  toolName,
+                });
+              }
+            }
+
+            if (
+              event.type === "message_update" &&
+              event.assistantMessageEvent.type === "toolcall_delta"
+            ) {
+              const block = getAssistantToolCallBlock(
+                event.assistantMessageEvent
+              );
+              if (block) {
+                const key = String(block.contentIndex);
+                const existing = streamingToolCalls.get(key);
+                const toolCallId =
+                  existing?.toolCallId ??
+                  block.id ??
+                  `tool-${block.contentIndex}`;
+                const toolName = existing?.toolName ?? block.name ?? "tool";
+                const delta =
+                  typeof event.assistantMessageEvent.delta === "string"
+                    ? event.assistantMessageEvent.delta
+                    : "";
+                const inputText = `${existing?.inputText ?? ""}${delta}`;
+                streamingToolCalls.set(key, {
+                  toolCallId,
+                  toolName,
+                  inputText,
+                });
+                writeNdjson(controller, encoder, {
+                  type: "tool-input-delta",
+                  toolCallId,
+                  toolName,
+                  inputText,
+                });
+              }
+            }
+
+            if (
+              event.type === "message_update" &&
+              event.assistantMessageEvent.type === "toolcall_end"
+            ) {
+              const block = getAssistantToolCallBlock(
+                event.assistantMessageEvent
+              );
+              if (block) {
+                streamingToolCalls.delete(String(block.contentIndex));
+              }
             }
 
             if (event.type === "tool_execution_start") {
