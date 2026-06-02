@@ -1,10 +1,1 @@
-import { initBotId } from "botid/client/core";
-
-initBotId({
-  protect: [
-    {
-      path: "/api/chat",
-      method: "POST",
-    },
-  ],
-});
+// botid disabled: requires HTTPS (crypto.subtle) and Vercel bot protection service
