@@ -14,6 +14,7 @@ import {
 import { SparklesIcon } from "./icons";
 import { MessageActions } from "./message-actions";
 import { MessageReasoning } from "./message-reasoning";
+import { renderPiToolSpecializedAction } from "./pi-tool-specializations";
 import { PreviewAttachment } from "./preview-attachment";
 
 const PurePreviewMessage = ({
@@ -115,6 +116,7 @@ const PurePreviewMessage = ({
       const isOpen =
         toolPart.state === "input-available" ||
         toolPart.state === "output-error";
+      const specializedAction = renderPiToolSpecializedAction(toolPart);
 
       return (
         <Tool
@@ -128,6 +130,9 @@ const PurePreviewMessage = ({
             toolName={toolPart.toolName}
             type="dynamic-tool"
           />
+          {specializedAction && (
+            <div className="px-3 pb-3">{specializedAction}</div>
+          )}
           <ToolContent>
             {(toolPart.input !== undefined ||
               toolPart.inputText !== undefined) && (

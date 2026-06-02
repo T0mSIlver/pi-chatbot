@@ -1,4 +1,4 @@
-import type { PiToolUIPart } from "@/lib/types";
+import type { PiToolUIPart, WorkspaceDisplayIntent } from "@/lib/types";
 
 export type PiStreamEvent =
   | { type: "text-delta"; delta: string }
@@ -32,9 +32,11 @@ export type PiStreamEvent =
       toolCallId: string;
       toolName: string;
       output: unknown;
+      displayIntent?: WorkspaceDisplayIntent;
       errorText?: string;
       isError: boolean;
     }
+  | { type: "workspace-display"; intent: WorkspaceDisplayIntent }
   | { type: "title"; title: string }
   | { type: "done"; sessionFilePath?: string }
   | { type: "error"; message: string };
@@ -58,6 +60,7 @@ export function toolEventToPart(
     toolName: event.toolName,
     state: event.isError ? "output-error" : "output-available",
     output: event.output,
+    displayIntent: event.displayIntent,
     errorText: event.errorText,
     isError: event.isError,
   };

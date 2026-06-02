@@ -11,6 +11,7 @@ import {
   SessionManager,
 } from "@mariozechner/pi-coding-agent";
 import { DEFAULT_CHAT_MODEL } from "@/lib/ai/models";
+import { createShowcaseFileTool } from "./showcase-tool";
 
 function splitModelId(modelId: string) {
   const [provider, ...modelParts] = modelId.split("/");
@@ -53,10 +54,14 @@ export async function createPiSdkSession({
   workspacePath,
   sessionFilePath,
   selectedModelId,
+  chatId,
+  sharedPath,
 }: {
   workspacePath: string;
   sessionFilePath?: string | null;
   selectedModelId?: string;
+  chatId: string;
+  sharedPath: string;
 }) {
   const agentDir = getAgentDir();
   const authStorage = AuthStorage.create(path.join(agentDir, "auth.json"));
@@ -85,6 +90,13 @@ export async function createPiSdkSession({
   const created = await createAgentSession({
     agentDir,
     authStorage,
+    customTools: [
+      createShowcaseFileTool({
+        chatId,
+        conversationPath: workspacePath,
+        sharedPath,
+      }),
+    ],
     cwd: workspacePath,
     model,
     modelRegistry,

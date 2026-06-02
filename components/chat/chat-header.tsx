@@ -1,6 +1,6 @@
 "use client";
 
-import { PanelLeftIcon } from "lucide-react";
+import { FilesIcon, PanelLeftIcon } from "lucide-react";
 import { memo } from "react";
 import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/ui/sidebar";
@@ -9,16 +9,16 @@ import { useProjects } from "@/hooks/use-projects";
 function PureChatHeader({
   chatId: _chatId,
   isReadonly: _isReadonly,
+  isWorkbenchOpen,
+  onToggleWorkbench,
 }: {
   chatId: string;
   isReadonly: boolean;
+  isWorkbenchOpen: boolean;
+  onToggleWorkbench: () => void;
 }) {
-  const { state, toggleSidebar, isMobile } = useSidebar();
+  const { toggleSidebar } = useSidebar();
   const { selectedProject } = useProjects();
-
-  if (state === "collapsed" && !isMobile) {
-    return null;
-  }
 
   return (
     <header className="sticky top-0 flex h-14 items-center gap-2 bg-sidebar px-3">
@@ -34,6 +34,17 @@ function PureChatHeader({
       <div className="min-w-0 truncate text-[13px] font-medium text-sidebar-foreground/70">
         {selectedProject?.name ?? "General"}
       </div>
+      <Button
+        aria-label={isWorkbenchOpen ? "Close files" : "Open files"}
+        className="ml-auto"
+        data-testid="workspace-files-button"
+        onClick={onToggleWorkbench}
+        size="icon-sm"
+        type="button"
+        variant={isWorkbenchOpen ? "secondary" : "ghost"}
+      >
+        <FilesIcon className="size-4" />
+      </Button>
     </header>
   );
 }
@@ -41,6 +52,7 @@ function PureChatHeader({
 export const ChatHeader = memo(PureChatHeader, (prevProps, nextProps) => {
   return (
     prevProps.chatId === nextProps.chatId &&
-    prevProps.isReadonly === nextProps.isReadonly
+    prevProps.isReadonly === nextProps.isReadonly &&
+    prevProps.isWorkbenchOpen === nextProps.isWorkbenchOpen
   );
 });

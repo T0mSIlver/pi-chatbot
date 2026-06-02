@@ -18,22 +18,17 @@ export function PureMessageActions({
 }) {
   const [_, copyToClipboard] = useCopyToClipboard();
 
-  if (isLoading) {
-    return null;
-  }
-
   const textFromParts = message.parts
     ?.filter((part) => part.type === "text")
     .map((part) => part.text)
     .join("\n")
     .trim();
 
-  const handleCopy = async () => {
-    if (!textFromParts) {
-      toast.error("There's no text to copy!");
-      return;
-    }
+  if (isLoading || !textFromParts) {
+    return null;
+  }
 
+  const handleCopy = async () => {
     await copyToClipboard(textFromParts);
     toast.success("Copied to clipboard!");
   };
@@ -53,5 +48,7 @@ export function PureMessageActions({
 
 export const MessageActions = memo(
   PureMessageActions,
-  (prevProps, nextProps) => prevProps.isLoading === nextProps.isLoading
+  (prevProps, nextProps) =>
+    prevProps.isLoading === nextProps.isLoading &&
+    prevProps.message === nextProps.message
 );

@@ -4,6 +4,10 @@ import { readFile } from "node:fs/promises";
 import { formatISO } from "date-fns";
 import type { ChatMessage, ChatMessagePart, PiToolUIPart } from "@/lib/types";
 import { generateUUID } from "@/lib/utils";
+import {
+  displayIntentFromShowcaseToolInput,
+  displayIntentFromToolResult,
+} from "./workspace-files";
 
 type SessionMessageEntry = {
   type: "message";
@@ -92,7 +96,11 @@ function getOrCreateAssistantForTool(
   return assistant;
 }
 
-function convertEntry(entry: SessionMessageEntry, messages: ChatMessage[]) {
+function convertEntry(
+  entry: SessionMessageEntry,
+  messages: ChatMessage[],
+  chatId?: string | null
+) {
   const { message } = entry;
 
   if (message.role === "user") {
@@ -144,12 +152,20 @@ function convertEntry(entry: SessionMessageEntry, messages: ChatMessage[]) {
           name?: string;
           arguments?: unknown;
         };
+        const displayIntent =
+          toolCall.name === "showcase_file"
+            ? displayIntentFromShowcaseToolInput({
+                value: toolCall.arguments,
+                chatId,
+              })
+            : null;
         parts.push({
           type: "tool-pi",
           toolCallId: toolCall.id,
           toolName: toolCall.name ?? "tool",
           state: "input-available",
           input: toolCall.arguments,
+          displayIntent: displayIntent ?? undefined,
         });
       }
     }
@@ -185,26 +201,45 @@ function convertEntry(entry: SessionMessageEntry, messages: ChatMessage[]) {
       })();
 
     const text = contentToText(message.content);
+    const displayIntent =
+      displayIntentFromToolResult(message.details) ??
+      (toolPart.toolName === "showcase_file"
+        ? displayIntentFromShowcaseToolInput({
+            value: toolPart.input,
+            chatId,
+          })
+        : null) ??
+      toolPart.displayIntent ??
+      null;
     toolPart.state = message.isError ? "output-error" : "output-available";
-    toolPart.output = message.details ?? text;
+    toolPart.output = displayIntent
+      ? text || "Opened in the preview pane."
+      : (message.details ?? text);
+    toolPart.displayIntent = displayIntent ?? undefined;
     toolPart.errorText = message.isError ? text || "Tool failed" : undefined;
     toolPart.isError = message.isError;
   }
 }
 
-export function piEntriesToChatMessages(entries: unknown[]) {
+export function piEntriesToChatMessages(
+  entries: unknown[],
+  chatId?: string | null
+) {
   const messages: ChatMessage[] = [];
 
   for (const entry of entries) {
     if (isSessionMessageEntry(entry)) {
-      convertEntry(entry, messages);
+      convertEntry(entry, messages, chatId);
     }
   }
 
   return messages;
 }
 
-export async function readPiSessionMessages(sessionFilePath: string | null) {
+export async function readPiSessionMessages(
+  sessionFilePath: string | null,
+  chatId?: string | null
+) {
   if (!sessionFilePath) {
     return [];
   }
@@ -223,7 +258,7 @@ export async function readPiSessionMessages(sessionFilePath: string | null) {
       })
       .filter(Boolean);
 
-    return piEntriesToChatMessages(entries);
+    return piEntriesToChatMessages(entries, chatId);
   } catch {
     return [];
   }

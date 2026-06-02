@@ -29,6 +29,49 @@ export type FileUIPart = {
   filename?: string;
 };
 
+export type WorkspaceScope = "conversation" | "shared";
+
+export type WorkspaceFileKind =
+  | "text"
+  | "code"
+  | "markdown"
+  | "image"
+  | "csv"
+  | "html_app"
+  | "binary";
+
+export type WorkspaceDisplayIntent = {
+  type: "workspace-file";
+  chatId: string;
+  scope: WorkspaceScope;
+  path: string;
+  title?: string;
+  mode?: "auto" | "text" | "code" | "markdown" | "image" | "csv" | "html_app";
+  line?: number;
+};
+
+export type WorkspaceChangeKind = "created" | "modified" | "deleted";
+
+export type WorkspaceFileNode = {
+  name: string;
+  path: string;
+  scope: WorkspaceScope;
+  kind: "directory" | "file";
+  fileKind?: WorkspaceFileKind;
+  size?: number;
+  mtime?: string;
+  children?: WorkspaceFileNode[];
+};
+
+export type WorkspaceChange = {
+  path: string;
+  scope: WorkspaceScope;
+  change: WorkspaceChangeKind;
+  fileKind?: WorkspaceFileKind;
+  size?: number;
+  mtime?: string;
+};
+
 export type PiToolUIPart = {
   type: "tool-pi";
   toolCallId: string;
@@ -41,6 +84,7 @@ export type PiToolUIPart = {
   input?: unknown;
   inputText?: string;
   output?: unknown;
+  displayIntent?: WorkspaceDisplayIntent;
   errorText?: string;
   isError?: boolean;
 };

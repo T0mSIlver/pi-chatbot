@@ -12,6 +12,7 @@ import type {
   PiToolUIPart,
   SendMessage,
   SetMessages,
+  WorkspaceDisplayIntent,
 } from "@/lib/types";
 import { fetcher, generateUUID } from "@/lib/utils";
 import { useProjects } from "./use-projects";
@@ -134,6 +135,7 @@ function updateAssistantMessage(
       if (toolPart) {
         toolPart.state = event.isError ? "output-error" : "output-available";
         toolPart.output = event.output;
+        toolPart.displayIntent = event.displayIntent;
         toolPart.errorText = event.errorText;
         toolPart.isError = event.isError;
       } else {
@@ -143,6 +145,7 @@ function updateAssistantMessage(
           toolName: event.toolName,
           state: event.isError ? "output-error" : "output-available",
           output: event.output,
+          displayIntent: event.displayIntent,
           errorText: event.errorText,
           isError: event.isError,
         });
@@ -213,6 +216,8 @@ export function usePiChat() {
   const [status, setStatus] = useState<ChatStatus>("ready");
   const [input, setInput] = useState("");
   const [currentModelId, setCurrentModelId] = useState(DEFAULT_CHAT_MODEL);
+  const [latestWorkspaceDisplayIntent, setLatestWorkspaceDisplayIntent] =
+    useState<WorkspaceDisplayIntent | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   // Tracks which chat the in-memory `messages` belong to so we only hydrate
   // from the server when the user actually switches chats — not on every
@@ -239,6 +244,7 @@ export function usePiChat() {
     if (isNewChat) {
       if (loadedChatIdRef.current !== chatId) {
         setMessagesState([]);
+        setLatestWorkspaceDisplayIntent(null);
         loadedChatIdRef.current = chatId;
       }
       return;
@@ -249,6 +255,7 @@ export function usePiChat() {
     // overwritten by stale SWR data.
     if (chatData?.messages && loadedChatIdRef.current !== chatId) {
       setMessagesState(chatData.messages);
+      setLatestWorkspaceDisplayIntent(null);
       loadedChatIdRef.current = chatId;
     }
     if (chatData?.projectId) {
@@ -321,6 +328,15 @@ export function usePiChat() {
             continue;
           }
 
+          if (event.type === "workspace-display") {
+            setLatestWorkspaceDisplayIntent(event.intent);
+            continue;
+          }
+
+          if (event.type === "tool-end" && event.displayIntent) {
+            setLatestWorkspaceDisplayIntent(event.displayIntent);
+          }
+
           setMessagesState((current) =>
             updateAssistantMessage(current, assistantMessage.id, event)
           );
@@ -386,6 +402,7 @@ export function usePiChat() {
       isLoading: !isNewChat && isLoading,
       currentModelId,
       setCurrentModelId,
+      latestWorkspaceDisplayIntent,
     }),
     [
       chatId,
@@ -398,6 +415,7 @@ export function usePiChat() {
       isNewChat,
       isLoading,
       currentModelId,
+      latestWorkspaceDisplayIntent,
     ]
   );
 }

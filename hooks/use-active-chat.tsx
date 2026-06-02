@@ -12,6 +12,7 @@ import type {
   ChatStatus,
   SendMessage,
   SetMessages,
+  WorkspaceDisplayIntent,
 } from "@/lib/types";
 import { usePiChat } from "./use-pi-chat";
 
@@ -28,6 +29,7 @@ type ActiveChatContextValue = {
   isLoading: boolean;
   currentModelId: string;
   setCurrentModelId: (id: string) => void;
+  latestWorkspaceDisplayIntent: WorkspaceDisplayIntent | null;
 };
 
 const ActiveChatContext = createContext<ActiveChatContextValue | null>(null);
