@@ -1,11 +1,24 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
 const CHAT_URL_REGEX = /\/chat\/[\w-]+/;
 const ERROR_TEXT_REGEX = /error|failed|trouble/i;
 
+async function gotoHomeWithProject(page: Page) {
+  const projectsResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/projects") && response.status() === 200
+  );
+  await page.goto("/");
+  await projectsResponse;
+  await expect(page.getByTestId("project-selector")).not.toContainText(
+    "Loading...",
+    { timeout: 30_000 }
+  );
+}
+
 test.describe("Chat API Integration", () => {
   test("sends message and receives AI response", async ({ page }) => {
-    await page.goto("/");
+    await gotoHomeWithProject(page);
 
     const input = page.getByTestId("multimodal-input");
     await input.fill("Hello");
@@ -21,7 +34,7 @@ test.describe("Chat API Integration", () => {
   });
 
   test("renders Pi tool blocks", async ({ page }) => {
-    await page.goto("/");
+    await gotoHomeWithProject(page);
 
     await page.getByTestId("multimodal-input").fill("Use a tool");
     await page.getByTestId("send-button").click();
@@ -32,8 +45,48 @@ test.describe("Chat API Integration", () => {
     await expect(page.getByText("read").first()).toBeVisible();
   });
 
+  test("renders interleaved thinking inline around tool calls", async ({
+    page,
+  }) => {
+    await gotoHomeWithProject(page);
+
+    await page.getByTestId("multimodal-input").fill("Interleaved thinking");
+    await page.getByTestId("send-button").click();
+
+    await expect(page.getByText("This is a mocked Pi response")).toBeVisible({
+      timeout: 30_000,
+    });
+
+    const assistantMessage = page.locator("[data-role='assistant']").first();
+    await expect(assistantMessage.getByTestId("message-reasoning")).toHaveCount(
+      2
+    );
+    await expect(assistantMessage.getByTestId("pi-tool-block")).toHaveCount(1);
+
+    const orderedBlocks = assistantMessage.locator(
+      '[data-testid="message-reasoning"], [data-testid="pi-tool-block"], [data-testid="message-content"]'
+    );
+    await expect(orderedBlocks).toHaveCount(4);
+    await expect(orderedBlocks.nth(0)).toHaveAttribute(
+      "data-testid",
+      "message-reasoning"
+    );
+    await expect(orderedBlocks.nth(1)).toHaveAttribute(
+      "data-testid",
+      "pi-tool-block"
+    );
+    await expect(orderedBlocks.nth(2)).toHaveAttribute(
+      "data-testid",
+      "message-reasoning"
+    );
+    await expect(orderedBlocks.nth(3)).toHaveAttribute(
+      "data-testid",
+      "message-content"
+    );
+  });
+
   test("redirects to /chat/:id after sending message", async ({ page }) => {
-    await page.goto("/");
+    await gotoHomeWithProject(page);
 
     const input = page.getByTestId("multimodal-input");
     await input.fill("Test redirect");
@@ -44,7 +97,7 @@ test.describe("Chat API Integration", () => {
   });
 
   test("clears input after sending", async ({ page }) => {
-    await page.goto("/");
+    await gotoHomeWithProject(page);
 
     const input = page.getByTestId("multimodal-input");
     await input.fill("Test message");
@@ -55,7 +108,16 @@ test.describe("Chat API Integration", () => {
   });
 
   test("shows stop button during generation", async ({ page }) => {
-    await page.goto("/");
+    await page.route("**/api/chat", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await route.fulfill({
+        status: 200,
+        contentType: "application/x-ndjson",
+        body: `${JSON.stringify({ type: "done" })}\n`,
+      });
+    });
+
+    await gotoHomeWithProject(page);
     const input = page.getByTestId("multimodal-input");
     await input.fill("Test");
     await page.getByTestId("send-button").click();
@@ -76,7 +138,7 @@ test.describe("Chat Error Handling", () => {
       });
     });
 
-    await page.goto("/");
+    await gotoHomeWithProject(page);
     const input = page.getByTestId("multimodal-input");
     await input.fill("Test error");
     await page.getByTestId("send-button").click();
@@ -90,7 +152,7 @@ test.describe("Chat Error Handling", () => {
 
 test.describe("Suggested Actions", () => {
   test("suggested actions are clickable", async ({ page }) => {
-    await page.goto("/");
+    await gotoHomeWithProject(page);
 
     const suggestions = page.locator(
       "[data-testid='suggested-actions'] button"

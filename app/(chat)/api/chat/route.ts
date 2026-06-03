@@ -249,6 +249,7 @@ async function runMockPiTurn({
   const timestamp = new Date().toISOString();
   const text = "This is a mocked Pi response for tests.";
   const userText = getTextFromMessage(message);
+  const shouldMockInterleavedThinking = /interleaved thinking/i.test(userText);
   const displayIntent = {
     type: "workspace-file" as const,
     chatId: chat.id,
@@ -257,6 +258,32 @@ async function runMockPiTurn({
     mode: "markdown" as const,
     title: "Mock workspace output",
   };
+  const readToolCall = {
+    type: "toolCall",
+    id: "mock-tool",
+    name: "read",
+    arguments: { path: "README.md" },
+  };
+  const showcaseToolCall = {
+    type: "toolCall",
+    id: "mock-showcase-file",
+    name: "showcase_file",
+    arguments: { path: "mock-output.md", mode: "markdown" },
+  };
+  const assistantContent = shouldMockInterleavedThinking
+    ? [
+        {
+          type: "thinking",
+          thinking: "I should inspect the README first.",
+        },
+        readToolCall,
+        {
+          type: "thinking",
+          thinking: "The README result is enough context.",
+        },
+        { type: "text", text },
+      ]
+    : [readToolCall, showcaseToolCall, { type: "text", text }];
 
   await mkdir(path.dirname(sessionFilePath), { recursive: true });
   await writeFile(
@@ -283,21 +310,7 @@ async function runMockPiTurn({
         timestamp,
         message: {
           role: "assistant",
-          content: [
-            {
-              type: "toolCall",
-              id: "mock-tool",
-              name: "read",
-              arguments: { path: "README.md" },
-            },
-            {
-              type: "toolCall",
-              id: "mock-showcase-file",
-              name: "showcase_file",
-              arguments: { path: "mock-output.md", mode: "markdown" },
-            },
-            { type: "text", text },
-          ],
+          content: assistantContent,
           timestamp: Date.now(),
         },
       }),
@@ -315,21 +328,26 @@ async function runMockPiTurn({
           timestamp: Date.now(),
         },
       }),
-      JSON.stringify({
-        type: "message",
-        id: generateUUID(),
-        parentId: message.id,
-        timestamp,
-        message: {
-          role: "toolResult",
-          toolCallId: "mock-showcase-file",
-          toolName: "showcase_file",
-          content: "Opened conversation:mock-output.md in the preview pane.",
-          details: { displayIntent },
-          isError: false,
-          timestamp: Date.now(),
-        },
-      }),
+      ...(shouldMockInterleavedThinking
+        ? []
+        : [
+            JSON.stringify({
+              type: "message",
+              id: generateUUID(),
+              parentId: message.id,
+              timestamp,
+              message: {
+                role: "toolResult",
+                toolCallId: "mock-showcase-file",
+                toolName: "showcase_file",
+                content:
+                  "Opened conversation:mock-output.md in the preview pane.",
+                details: { displayIntent },
+                isError: false,
+                timestamp: Date.now(),
+              },
+            }),
+          ]),
     ].join("\n")}\n`
   );
 
@@ -360,6 +378,12 @@ async function runMockPiTurn({
   if (title) {
     writeNdjson(controller, encoder, { type: "title", title });
   }
+  if (shouldMockInterleavedThinking) {
+    writeNdjson(controller, encoder, {
+      type: "thinking-delta",
+      delta: "I should inspect the README first.",
+    });
+  }
   writeNdjson(controller, encoder, {
     type: "tool-start",
     toolCallId: "mock-tool",
@@ -373,24 +397,31 @@ async function runMockPiTurn({
     output: "mock tool output",
     isError: false,
   });
-  writeNdjson(controller, encoder, {
-    type: "tool-start",
-    toolCallId: "mock-showcase-file",
-    toolName: "showcase_file",
-    input: { path: "mock-output.md", mode: "markdown" },
-  });
-  writeNdjson(controller, encoder, {
-    type: "tool-end",
-    toolCallId: "mock-showcase-file",
-    toolName: "showcase_file",
-    output: "Opened conversation:mock-output.md in the preview pane.",
-    displayIntent,
-    isError: false,
-  });
-  writeNdjson(controller, encoder, {
-    type: "workspace-display",
-    intent: displayIntent,
-  });
+  if (shouldMockInterleavedThinking) {
+    writeNdjson(controller, encoder, {
+      type: "thinking-delta",
+      delta: "The README result is enough context.",
+    });
+  } else {
+    writeNdjson(controller, encoder, {
+      type: "tool-start",
+      toolCallId: "mock-showcase-file",
+      toolName: "showcase_file",
+      input: { path: "mock-output.md", mode: "markdown" },
+    });
+    writeNdjson(controller, encoder, {
+      type: "tool-end",
+      toolCallId: "mock-showcase-file",
+      toolName: "showcase_file",
+      output: "Opened conversation:mock-output.md in the preview pane.",
+      displayIntent,
+      isError: false,
+    });
+    writeNdjson(controller, encoder, {
+      type: "workspace-display",
+      intent: displayIntent,
+    });
+  }
   writeNdjson(controller, encoder, { type: "text-delta", delta: text });
   writeNdjson(controller, encoder, { type: "done", sessionFilePath });
 }

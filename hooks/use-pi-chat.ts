@@ -41,6 +41,13 @@ function mergeThinkingDelta(message: ChatMessage, delta: string) {
   }
 }
 
+function finishActiveReasoning(message: ChatMessage) {
+  const lastPart = message.parts.at(-1);
+  if (lastPart?.type === "reasoning" && lastPart.state === "streaming") {
+    lastPart.state = "done";
+  }
+}
+
 function findToolPart(message: ChatMessage, toolCallId: string) {
   return message.parts.find(
     (part): part is PiToolUIPart =>
@@ -64,6 +71,7 @@ function updateAssistantMessage(
     };
 
     if (event.type === "text-delta") {
+      finishActiveReasoning(next);
       mergeTextDelta(next, event.delta);
     }
 
@@ -72,6 +80,7 @@ function updateAssistantMessage(
     }
 
     if (event.type === "tool-input-start") {
+      finishActiveReasoning(next);
       const toolPart = findToolPart(next, event.toolCallId);
       if (toolPart) {
         toolPart.state = "input-streaming";
@@ -89,6 +98,7 @@ function updateAssistantMessage(
     }
 
     if (event.type === "tool-input-delta") {
+      finishActiveReasoning(next);
       const toolPart = findToolPart(next, event.toolCallId);
       if (toolPart) {
         toolPart.state = "input-streaming";
@@ -106,6 +116,7 @@ function updateAssistantMessage(
     }
 
     if (event.type === "tool-start") {
+      finishActiveReasoning(next);
       const toolPart = findToolPart(next, event.toolCallId);
       if (toolPart) {
         toolPart.state = "input-available";
@@ -124,6 +135,7 @@ function updateAssistantMessage(
     }
 
     if (event.type === "tool-update") {
+      finishActiveReasoning(next);
       const toolPart = findToolPart(next, event.toolCallId);
       if (toolPart) {
         toolPart.output = event.output;
@@ -131,6 +143,7 @@ function updateAssistantMessage(
     }
 
     if (event.type === "tool-end") {
+      finishActiveReasoning(next);
       const toolPart = findToolPart(next, event.toolCallId);
       if (toolPart) {
         toolPart.state = event.isError ? "output-error" : "output-available";
@@ -153,6 +166,7 @@ function updateAssistantMessage(
     }
 
     if (event.type === "error") {
+      finishActiveReasoning(next);
       mergeTextDelta(next, event.message);
     }
 

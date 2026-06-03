@@ -65,31 +65,16 @@ const PurePreviewMessage = ({
     </div>
   );
 
-  const mergedReasoning = message.parts?.reduce(
-    (acc, part) => {
-      if (part.type === "reasoning" && part.text?.trim().length > 0) {
-        return {
-          text: acc.text ? `${acc.text}\n\n${part.text}` : part.text,
-          isStreaming: part.state === "streaming",
-          rendered: false,
-        };
-      }
-      return acc;
-    },
-    { text: "", isStreaming: false, rendered: false }
-  ) ?? { text: "", isStreaming: false, rendered: false };
-
   const parts = message.parts?.map((part, index) => {
     const key = `message-${message.id}-part-${index}`;
 
     if (part.type === "reasoning") {
-      if (!mergedReasoning.rendered && mergedReasoning.text) {
-        mergedReasoning.rendered = true;
+      if (part.text?.trim().length > 0) {
         return (
           <MessageReasoning
-            isLoading={isLoading || mergedReasoning.isStreaming}
+            isLoading={isLoading && part.state === "streaming"}
             key={key}
-            reasoning={mergedReasoning.text}
+            reasoning={part.text}
           />
         );
       }
