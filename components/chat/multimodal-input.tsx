@@ -373,6 +373,7 @@ function PureMultimodalInput({
         )}
 
       <input
+        accept="image/jpeg,image/png"
         className="pointer-events-none fixed -top-4 -left-4 size-0.5 opacity-0"
         multiple
         onChange={handleFileChange}
@@ -502,12 +503,15 @@ function PureMultimodalInput({
             <PromptInputSubmit
               className={cn(
                 "h-7 w-7 rounded-xl transition-all duration-200",
-                input.trim()
+                input.trim() || attachments.length > 0
                   ? "bg-foreground text-background hover:opacity-85 active:scale-95"
                   : "bg-muted text-muted-foreground/25 cursor-not-allowed"
               )}
               data-testid="send-button"
-              disabled={!input.trim() || uploadQueue.length > 0}
+              disabled={
+                (!input.trim() && attachments.length === 0) ||
+                uploadQueue.length > 0
+              }
               status={status}
               variant="secondary"
             >
