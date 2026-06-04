@@ -12,6 +12,7 @@ import { isTestEnvironment } from "@/lib/constants";
 import { createPiModelRegistry, findPiModel } from "./model";
 
 const MAX_TRANSCRIPT_CHARS = 12_000;
+const METADATA_TIMEOUT_MS = 8000;
 
 const metadataSchema = z.object({
   title: z.string().min(1).max(80),
@@ -19,6 +20,11 @@ const metadataSchema = z.object({
 });
 
 export type ConversationMetadata = z.infer<typeof metadataSchema>;
+
+const rawMetadataSchema = z.object({
+  title: z.string().optional().catch(""),
+  summary: z.string().optional().catch(""),
+});
 
 function clampTranscript(transcript: string) {
   if (transcript.length <= MAX_TRANSCRIPT_CHARS) {
@@ -50,11 +56,48 @@ function cleanSummary(value: string) {
   return value.replace(/\s+/g, " ").trim().slice(0, 240);
 }
 
-function textFromAssistantResponse(content: ConversationMetadata) {
-  return {
-    title: cleanTitle(content.title),
-    summary: cleanSummary(content.summary),
+function createMetadataSignal(parentSignal?: AbortSignal) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort(new Error("Conversation metadata timed out."));
+  }, METADATA_TIMEOUT_MS);
+  const abortFromParent = () => {
+    controller.abort(parentSignal?.reason);
   };
+
+  if (parentSignal?.aborted) {
+    abortFromParent();
+  } else {
+    parentSignal?.addEventListener("abort", abortFromParent, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      clearTimeout(timeout);
+      parentSignal?.removeEventListener("abort", abortFromParent);
+    },
+  };
+}
+
+function normalizeMetadata({
+  title,
+  summary,
+}: {
+  title: string;
+  summary: string;
+}): ConversationMetadata {
+  const normalized = {
+    title: cleanTitle(title),
+    summary: cleanSummary(summary),
+  };
+
+  return metadataSchema.parse({
+    title: normalized.title || "New conversation",
+    summary:
+      normalized.summary ||
+      "The conversation has started and will be summarized after more context.",
+  });
 }
 
 function parseMetadata(text: string): ConversationMetadata {
@@ -68,10 +111,32 @@ function parseMetadata(text: string): ConversationMetadata {
   const jsonText =
     start >= 0 && end >= start ? unwrapped.slice(start, end + 1) : unwrapped;
 
-  return textFromAssistantResponse(metadataSchema.parse(JSON.parse(jsonText)));
+  try {
+    const parsed = rawMetadataSchema.parse(JSON.parse(jsonText));
+    return normalizeMetadata({
+      title: parsed.title ?? "",
+      summary: parsed.summary ?? "",
+    });
+  } catch {
+    const title =
+      unwrapped.match(/(?:^|\n)\s*title\s*[:=-]\s*(.+)/i)?.[1] ??
+      unwrapped.split("\n").find((line) => line.trim()) ??
+      "New conversation";
+    const summary =
+      unwrapped.match(/(?:^|\n)\s*summary\s*[:=-]\s*(.+)/i)?.[1] ??
+      unwrapped
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .slice(1)
+        .join(" ") ??
+      "";
+
+    return normalizeMetadata({ title, summary });
+  }
 }
 
-function mockConversationMetadata(entries: SessionEntry[]) {
+function fallbackConversationMetadata(entries: SessionEntry[]) {
   const transcript = serializeConversation(
     convertToLlm(buildSessionContext(entries).messages)
   );
@@ -81,11 +146,18 @@ function mockConversationMetadata(entries: SessionEntry[]) {
       .find((line) => line.startsWith("[User]:"))
       ?.replace("[User]:", "")
       .trim() || "Mock conversation";
+  const firstAssistantLine = transcript
+    .split("\n")
+    .find((line) => line.startsWith("[Assistant]:"))
+    ?.replace("[Assistant]:", "")
+    .trim();
 
-  return {
-    title: cleanTitle(firstUserLine),
-    summary: "A mocked Pi turn created workspace output for test coverage.",
-  };
+  return normalizeMetadata({
+    title: firstUserLine,
+    summary:
+      firstAssistantLine ||
+      "The conversation has started and will be summarized after more context.",
+  });
 }
 
 export async function generateConversationMetadata({
@@ -102,8 +174,12 @@ export async function generateConversationMetadata({
   }
 
   if (isTestEnvironment) {
-    return mockConversationMetadata(entries);
+    return fallbackConversationMetadata(entries);
   }
+
+  const fallbackMetadata = fallbackConversationMetadata(entries);
+
+  const metadataAbort = createMetadataSignal(signal);
 
   try {
     const transcript = clampTranscript(
@@ -113,12 +189,12 @@ export async function generateConversationMetadata({
     const model = findPiModel({ modelRegistry, selectedModelId });
 
     if (!model) {
-      return null;
+      return fallbackMetadata;
     }
 
     const auth = await modelRegistry.getApiKeyAndHeaders(model);
     if (!auth.ok) {
-      return null;
+      return fallbackMetadata;
     }
 
     const response = await completeSimple(
@@ -155,13 +231,13 @@ ${transcript}
         headers: auth.headers,
         maxTokens: 384,
         reasoning: model.reasoning ? "minimal" : undefined,
-        signal,
+        signal: metadataAbort.signal,
         temperature: 0.1,
       }
     );
 
     if (response.stopReason === "error") {
-      return null;
+      return fallbackMetadata;
     }
 
     const text = response.content
@@ -172,9 +248,11 @@ ${transcript}
       .join("\n")
       .trim();
 
-    return text ? parseMetadata(text) : null;
+    return text ? parseMetadata(text) : fallbackMetadata;
   } catch (error) {
     console.error("Failed to generate conversation metadata:", error);
-    return null;
+    return fallbackMetadata;
+  } finally {
+    metadataAbort.dispose();
   }
 }

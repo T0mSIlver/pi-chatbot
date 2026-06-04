@@ -58,6 +58,18 @@ test.describe("Chat Input Features", () => {
     await expect(input).toHaveValue("");
   });
 
+  test("sidebar updates with generated title without refresh", async ({
+    page,
+  }) => {
+    const title = `Sidebar title ${Date.now()}`;
+
+    await page.goto("/");
+    await page.getByTestId("multimodal-input").fill(title);
+    await page.getByTestId("send-button").click();
+
+    await expect(page.locator('[data-sidebar="sidebar"]')).toContainText(title);
+  });
+
   test("input supports multiline text", async ({ page }) => {
     await page.goto("/");
     const input = page.getByTestId("multimodal-input");

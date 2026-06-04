@@ -4,6 +4,11 @@ import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import useSWR, { useSWRConfig } from "swr";
+import { unstable_serialize } from "swr/infinite";
+import {
+  type ChatHistory,
+  getChatHistoryPaginationKey,
+} from "@/components/chat/sidebar-history";
 import { DEFAULT_CHAT_MODEL } from "@/lib/ai/models";
 import type { PiStreamEvent } from "@/lib/pi/events";
 import type {
@@ -331,8 +336,17 @@ export function usePiChat() {
   ]);
 
   const refreshHistory = useCallback(() => {
+    mutate(
+      unstable_serialize((pageIndex: number, previousPageData: ChatHistory) =>
+        getChatHistoryPaginationKey(
+          pageIndex,
+          previousPageData,
+          selectedProjectId
+        )
+      )
+    );
     mutate((key) => typeof key === "string" && key.includes("/api/history"));
-  }, [mutate]);
+  }, [mutate, selectedProjectId]);
 
   const resolveRestoreConfirmation = useCallback((confirmed: boolean) => {
     const resolver = restoreConfirmationResolverRef.current;

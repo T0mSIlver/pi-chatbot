@@ -535,6 +535,13 @@ export async function POST(request: Request) {
         };
 
         try {
+          if (shouldGenerateMetadata) {
+            writeNdjson(controller, encoder, {
+              type: "title",
+              title: chat.title,
+            });
+          }
+
           const beforeSnapshot = await snapshotWorkspaceFiles(workspaceRoots);
           const persistWorkspaceChanges = async () => {
             const afterSnapshot = await snapshotWorkspaceFiles(workspaceRoots);
