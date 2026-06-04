@@ -44,6 +44,7 @@ type ActiveChatContextValue = {
   currentModelId: string;
   setCurrentModelId: (id: string) => void;
   latestWorkspaceDisplayIntent: WorkspaceDisplayIntent | null;
+  runningChatIds: string[];
 };
 
 const ActiveChatContext = createContext<ActiveChatContextValue | null>(null);

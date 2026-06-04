@@ -5,11 +5,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import useSWR, { useSWRConfig } from "swr";
 import { unstable_serialize } from "swr/infinite";
+import { DEFAULT_CHAT_MODEL } from "@/lib/ai/models";
 import {
   type ChatHistory,
   getChatHistoryPaginationKey,
-} from "@/components/chat/sidebar-history";
-import { DEFAULT_CHAT_MODEL } from "@/lib/ai/models";
+} from "@/lib/chat-history";
 import type { PiStreamEvent } from "@/lib/pi/events";
 import type {
   ChatMessage,
@@ -37,11 +37,37 @@ type PendingEdit = {
   originalText: string;
 };
 
+type ChatRuntimeState = {
+  messages: ChatMessage[];
+  status: ChatStatus;
+  latestWorkspaceDisplayIntent: WorkspaceDisplayIntent | null;
+};
+
+type ChatRuntimeStates = Record<string, ChatRuntimeState>;
+
 type RestorePlan = {
   checkpointId: string;
   changes: WorkspaceChange[];
   missingCheckpoint: boolean;
 };
+
+const emptyRuntimeState: ChatRuntimeState = {
+  messages: [],
+  status: "ready",
+  latestWorkspaceDisplayIntent: null,
+};
+
+function createEmptyRuntimeState(): ChatRuntimeState {
+  return {
+    messages: [],
+    status: "ready",
+    latestWorkspaceDisplayIntent: null,
+  };
+}
+
+function isRunningStatus(status: ChatStatus) {
+  return status === "submitted" || status === "streaming";
+}
 
 function textFromMessage(message: ChatMessage) {
   return message.parts
@@ -266,14 +292,25 @@ export function usePiChat() {
   prevPathnameRef.current = pathname;
 
   const chatId = chatIdFromUrl ?? newChatIdRef.current;
-  const [messages, setMessagesState] = useState<ChatMessage[]>([]);
-  const [status, setStatus] = useState<ChatStatus>("ready");
+  const [chatRuntimeStates, setChatRuntimeStates] = useState<ChatRuntimeStates>(
+    {}
+  );
+  const currentRuntimeState = chatRuntimeStates[chatId] ?? emptyRuntimeState;
+  const messages = currentRuntimeState.messages;
+  const status = currentRuntimeState.status;
+  const latestWorkspaceDisplayIntent =
+    currentRuntimeState.latestWorkspaceDisplayIntent;
+  const runningChatIds = useMemo(
+    () =>
+      Object.entries(chatRuntimeStates)
+        .filter(([, state]) => isRunningStatus(state.status))
+        .map(([runtimeChatId]) => runtimeChatId),
+    [chatRuntimeStates]
+  );
   const [input, setInput] = useState("");
   const [pendingEdit, setPendingEdit] = useState<PendingEdit | null>(null);
   const [currentModelId, setCurrentModelId] = useState(DEFAULT_CHAT_MODEL);
-  const [latestWorkspaceDisplayIntent, setLatestWorkspaceDisplayIntent] =
-    useState<WorkspaceDisplayIntent | null>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const abortControllersRef = useRef(new Map<string, AbortController>());
   const pendingEditRef = useRef<PendingEdit | null>(null);
   const restoreConfirmationResolverRef = useRef<
     ((confirmed: boolean) => void) | null
@@ -281,11 +318,9 @@ export function usePiChat() {
   const [restoreConfirmationChanges, setRestoreConfirmationChanges] = useState<
     WorkspaceChange[] | null
   >(null);
-  // Tracks which chat the in-memory `messages` belong to so we only hydrate
-  // from the server when the user actually switches chats — not on every
-  // status change, which would clobber a freshly streamed reply with stale
-  // (empty) server data.
-  const loadedChatIdRef = useRef<string | null>(null);
+  // Tracks chats already hydrated from the server so live in-memory streams are
+  // not overwritten by stale SWR snapshots.
+  const loadedChatIdsRef = useRef<Set<string>>(new Set());
 
   const messagesKey = `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/messages?chatId=${chatId}`;
 
@@ -297,20 +332,54 @@ export function usePiChat() {
     { revalidateOnFocus: false }
   );
 
-  const setMessages: SetMessages = useCallback((nextMessages) => {
-    setMessagesState((current) =>
-      typeof nextMessages === "function" ? nextMessages(current) : nextMessages
-    );
-  }, []);
+  const updateChatRuntimeState = useCallback(
+    (
+      targetChatId: string,
+      updater: (state: ChatRuntimeState) => ChatRuntimeState
+    ) => {
+      setChatRuntimeStates((currentStates) => {
+        const previousState =
+          currentStates[targetChatId] ?? createEmptyRuntimeState();
+
+        return {
+          ...currentStates,
+          [targetChatId]: updater(previousState),
+        };
+      });
+    },
+    []
+  );
+
+  const setChatMessages = useCallback(
+    (
+      targetChatId: string,
+      nextMessages: ChatMessage[] | ((messages: ChatMessage[]) => ChatMessage[])
+    ) => {
+      updateChatRuntimeState(targetChatId, (state) => ({
+        ...state,
+        messages:
+          typeof nextMessages === "function"
+            ? nextMessages(state.messages)
+            : nextMessages,
+      }));
+    },
+    [updateChatRuntimeState]
+  );
+
+  const setMessages: SetMessages = useCallback(
+    (nextMessages) => {
+      setChatMessages(chatId, nextMessages);
+    },
+    [chatId, setChatMessages]
+  );
 
   useEffect(() => {
     // Brand-new chat: reset to an empty thread once, when we first land on it.
     if (isNewChat) {
-      if (loadedChatIdRef.current !== chatId) {
-        setMessagesState([]);
-        setLatestWorkspaceDisplayIntent(null);
+      if (!loadedChatIdsRef.current.has(chatId)) {
+        updateChatRuntimeState(chatId, () => createEmptyRuntimeState());
         setPendingEdit(null);
-        loadedChatIdRef.current = chatId;
+        loadedChatIdsRef.current.add(chatId);
       }
       return;
     }
@@ -318,11 +387,13 @@ export function usePiChat() {
     // we haven't loaded yet. Once loaded (or after streaming a live turn),
     // the in-memory messages are the source of truth and must not be
     // overwritten by stale SWR data.
-    if (chatData?.messages && loadedChatIdRef.current !== chatId) {
-      setMessagesState(chatData.messages);
-      setLatestWorkspaceDisplayIntent(null);
+    if (chatData?.messages && !loadedChatIdsRef.current.has(chatId)) {
+      updateChatRuntimeState(chatId, () => ({
+        ...createEmptyRuntimeState(),
+        messages: chatData.messages,
+      }));
       setPendingEdit(null);
-      loadedChatIdRef.current = chatId;
+      loadedChatIdsRef.current.add(chatId);
     }
     if (chatData?.projectId) {
       setSelectedProjectId(chatData.projectId);
@@ -333,6 +404,7 @@ export function usePiChat() {
     chatId,
     isNewChat,
     setSelectedProjectId,
+    updateChatRuntimeState,
   ]);
 
   const refreshHistory = useCallback(() => {
@@ -462,8 +534,20 @@ export function usePiChat() {
 
   const sendMessage: SendMessage = useCallback(
     async (message, options) => {
-      if (!selectedProjectId) {
+      const targetChatId = chatId;
+      const targetProjectId = selectedProjectId;
+      const targetModelId = currentModelId;
+      const targetMessagesKey = `${
+        process.env.NEXT_PUBLIC_BASE_PATH ?? ""
+      }/api/messages?chatId=${targetChatId}`;
+
+      if (!targetProjectId) {
         toast.error("Select a project before sending a message.");
+        return false;
+      }
+
+      if (abortControllersRef.current.has(targetChatId)) {
+        toast.error("This conversation is already running.");
         return false;
       }
 
@@ -517,25 +601,34 @@ export function usePiChat() {
 
       setPendingEdit(null);
       editOptions?.onAccepted?.();
-      setMessagesState((current) => {
-        if (!editOptions?.replaceFromMessageId) {
-          return [...current, userMessage];
-        }
+      loadedChatIdsRef.current.add(targetChatId);
+      updateChatRuntimeState(targetChatId, (state) => {
+        const nextMessages = (() => {
+          if (!editOptions?.replaceFromMessageId) {
+            return [...state.messages, userMessage];
+          }
 
-        const replaceIndex = current.findIndex(
-          (candidate) => candidate.id === editOptions.replaceFromMessageId
-        );
+          const replaceIndex = state.messages.findIndex(
+            (candidate) => candidate.id === editOptions.replaceFromMessageId
+          );
 
-        if (replaceIndex < 0) {
-          return [...current, userMessage];
-        }
+          if (replaceIndex < 0) {
+            return [...state.messages, userMessage];
+          }
 
-        return [...current.slice(0, replaceIndex), userMessage];
+          return [...state.messages.slice(0, replaceIndex), userMessage];
+        })();
+
+        return {
+          ...state,
+          latestWorkspaceDisplayIntent: null,
+          messages: nextMessages,
+          status: "submitted",
+        };
       });
-      setStatus("submitted");
 
       const abortController = new AbortController();
-      abortControllerRef.current = abortController;
+      abortControllersRef.current.set(targetChatId, abortController);
 
       try {
         const response = await fetch(
@@ -543,10 +636,10 @@ export function usePiChat() {
           {
             method: "POST",
             body: JSON.stringify({
-              id: chatId,
-              projectId: selectedProjectId,
+              id: targetChatId,
+              projectId: targetProjectId,
               message: userMessage,
-              selectedChatModel: currentModelId,
+              selectedChatModel: targetModelId,
               branchFromEntryId: editOptions?.branchFromEntryId,
             }),
             signal: abortController.signal,
@@ -558,8 +651,11 @@ export function usePiChat() {
           throw new Error(error?.cause || error?.message || "Request failed");
         }
 
-        setMessagesState((current) => [...current, assistantMessage]);
-        setStatus("streaming");
+        updateChatRuntimeState(targetChatId, (state) => ({
+          ...state,
+          messages: [...state.messages, assistantMessage],
+          status: "streaming",
+        }));
 
         for await (const event of readNdjson(response.body)) {
           if (event.type === "title") {
@@ -568,20 +664,26 @@ export function usePiChat() {
           }
 
           if (event.type === "workspace-display") {
-            setLatestWorkspaceDisplayIntent(event.intent);
+            updateChatRuntimeState(targetChatId, (state) => ({
+              ...state,
+              latestWorkspaceDisplayIntent: event.intent,
+            }));
             continue;
           }
 
           if (event.type === "done" && event.messages) {
-            setMessagesState(event.messages);
+            setChatMessages(targetChatId, event.messages);
             continue;
           }
 
           if (event.type === "tool-end" && event.displayIntent) {
-            setLatestWorkspaceDisplayIntent(event.displayIntent);
+            updateChatRuntimeState(targetChatId, (state) => ({
+              ...state,
+              latestWorkspaceDisplayIntent: event.displayIntent ?? null,
+            }));
           }
 
-          setMessagesState((current) =>
+          setChatMessages(targetChatId, (current) =>
             updateAssistantMessage(current, assistantMessage.id, event)
           );
 
@@ -590,50 +692,63 @@ export function usePiChat() {
           }
         }
 
-        setStatus("ready");
+        updateChatRuntimeState(targetChatId, (state) => ({
+          ...state,
+          status: "ready",
+        }));
         refreshHistory();
         // Refresh the persisted-messages cache so revisiting this chat later
         // reflects the saved turn instead of the empty snapshot fetched when
         // the chat was first created.
-        mutate(messagesKey);
+        mutate(targetMessagesKey);
         return true;
       } catch (error) {
         if ((error as DOMException).name === "AbortError") {
-          setStatus("ready");
+          updateChatRuntimeState(targetChatId, (state) => ({
+            ...state,
+            status: "ready",
+          }));
         } else {
           toast.error(
             error instanceof Error ? error.message : "Pi failed to respond."
           );
-          setStatus("error");
+          updateChatRuntimeState(targetChatId, (state) => ({
+            ...state,
+            status: "error",
+          }));
         }
         return true;
       } finally {
-        abortControllerRef.current = null;
+        if (abortControllersRef.current.get(targetChatId) === abortController) {
+          abortControllersRef.current.delete(targetChatId);
+        }
       }
     },
     [
       chatId,
       currentModelId,
-      messagesKey,
       mutate,
       refreshHistory,
       restoreCurrentWorkspace,
       selectedProjectId,
+      setChatMessages,
+      updateChatRuntimeState,
     ]
   );
 
   const stop = useCallback(() => {
-    abortControllerRef.current?.abort();
-    setMessagesState((current) =>
-      current.map((message) => ({
+    abortControllersRef.current.get(chatId)?.abort();
+    updateChatRuntimeState(chatId, (state) => ({
+      ...state,
+      messages: state.messages.map((message) => ({
         ...message,
         parts: message.parts.map((part) =>
           part.type === "reasoning" ? { ...part, state: "done" } : part
         ),
-      }))
-    );
-    setStatus("ready");
-  }, []);
+      })),
+      status: "ready",
+    }));
+  }, [chatId, updateChatRuntimeState]);
 
   const startEditMessage = useCallback(
     (messageId: string) => {
@@ -788,6 +903,7 @@ export function usePiChat() {
       currentModelId,
       setCurrentModelId,
       latestWorkspaceDisplayIntent,
+      runningChatIds,
     }),
     [
       chatId,
@@ -808,6 +924,7 @@ export function usePiChat() {
       isLoading,
       currentModelId,
       latestWorkspaceDisplayIntent,
+      runningChatIds,
     ]
   );
 }

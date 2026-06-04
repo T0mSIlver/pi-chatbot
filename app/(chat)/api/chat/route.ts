@@ -87,6 +87,35 @@ function previewToolOutput(value: unknown) {
   return `${text.slice(0, 8000)}\n\n[truncated for display]`;
 }
 
+function createInitialConversationTitle(message: PostRequestBody["message"]) {
+  const text = getTextFromMessage(message).replace(/\s+/g, " ").trim();
+
+  if (!text) {
+    return "New conversation";
+  }
+
+  const normalized = text
+    .toLowerCase()
+    .replace(/[.!?]+$/g, "")
+    .trim();
+  if (
+    ["hi", "hello", "hey", "yo", "test"].includes(normalized) ||
+    normalized.length < 3
+  ) {
+    return "New conversation";
+  }
+
+  const title = text
+    .replace(/^["'#*\s]+/, "")
+    .replace(/[".?!]+$/g, "")
+    .split(/\s+/)
+    .slice(0, 8)
+    .join(" ")
+    .trim();
+
+  return title.length > 60 ? `${title.slice(0, 57).trim()}...` : title;
+}
+
 type StreamingToolCall = {
   toolCallId: string;
   toolName: string;
@@ -469,6 +498,7 @@ export async function POST(request: Request) {
   try {
     let chat = await getChatById({ id: requestBody.id });
     let shouldGenerateMetadata = false;
+    const initialTitle = createInitialConversationTitle(requestBody.message);
 
     if (chat) {
       if (chat.userId !== session.user.id) {
@@ -493,7 +523,7 @@ export async function POST(request: Request) {
           id: requestBody.id,
           userId: session.user.id,
           projectId: project.id,
-          title: "New conversation",
+          title: initialTitle,
           piSessionFilePath: path.join(
             workspace.conversationPath,
             "pi-session.jsonl"
@@ -510,7 +540,7 @@ export async function POST(request: Request) {
           id: requestBody.id,
           userId: session.user.id,
           projectId: project.id,
-          title: "New conversation",
+          title: initialTitle,
           piSessionFilePath: piSession.sessionFile ?? "",
         });
         piSession.dispose();

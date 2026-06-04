@@ -12,7 +12,7 @@ import { isTestEnvironment } from "@/lib/constants";
 import { createPiModelRegistry, findPiModel } from "./model";
 
 const MAX_TRANSCRIPT_CHARS = 12_000;
-const METADATA_TIMEOUT_MS = 8000;
+const METADATA_TIMEOUT_MS = 20_000;
 
 const metadataSchema = z.object({
   title: z.string().min(1).max(80),

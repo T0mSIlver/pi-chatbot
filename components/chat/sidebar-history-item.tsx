@@ -17,11 +17,13 @@ import { MoreHorizontalIcon, TrashIcon } from "./icons";
 const PureChatItem = ({
   chat,
   isActive,
+  isRunning,
   onDelete,
   setOpenMobile,
 }: {
   chat: Chat;
   isActive: boolean;
+  isRunning: boolean;
   onDelete: (chatId: string) => void;
   setOpenMobile: (open: boolean) => void;
 }) => {
@@ -34,7 +36,19 @@ const PureChatItem = ({
       >
         <Link href={`/chat/${chat.id}`} onClick={() => setOpenMobile(false)}>
           <span className="flex min-w-0 flex-col gap-0.5 py-1">
-            <span className="truncate">{chat.title}</span>
+            <span className="flex min-w-0 items-center gap-1.5">
+              {isRunning && (
+                <span
+                  className="relative flex size-2 shrink-0"
+                  title="Generating"
+                >
+                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-500/50" />
+                  <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
+                  <span className="sr-only">Generating</span>
+                </span>
+              )}
+              <span className="truncate">{chat.title}</span>
+            </span>
             {chat.summary && (
               <span className="line-clamp-2 text-[11px] leading-snug text-sidebar-foreground/40">
                 {chat.summary}
@@ -71,6 +85,9 @@ const PureChatItem = ({
 
 export const ChatItem = memo(PureChatItem, (prevProps, nextProps) => {
   if (prevProps.isActive !== nextProps.isActive) {
+    return false;
+  }
+  if (prevProps.isRunning !== nextProps.isRunning) {
     return false;
   }
   return (

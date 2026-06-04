@@ -157,14 +157,11 @@ export function ChatShell() {
   const [selectedWorkspaceIntent, setSelectedWorkspaceIntent] =
     useState<WorkspaceDisplayIntent | null>(null);
   const isMobile = useIsMobile();
-  const stopRef = useRef(stop);
-  stopRef.current = stop;
 
   const prevChatIdRef = useRef(chatId);
   useEffect(() => {
     if (prevChatIdRef.current !== chatId) {
       prevChatIdRef.current = chatId;
-      stopRef.current();
       setAttachments([]);
       setIsWorkbenchOpen(false);
       setSelectedWorkspaceIntent(null);
