@@ -23,10 +23,6 @@ export async function getAuthorizedWorkspace(chatId: string | null) {
     throw new ChatbotError("not_found:chat");
   }
 
-  if (chat.userId !== session.user.id) {
-    throw new ChatbotError("forbidden:chat");
-  }
-
   return {
     chat,
     roots: getWorkspaceRoots(chat),

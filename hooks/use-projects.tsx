@@ -23,6 +23,7 @@ type ProjectsContextValue = {
 };
 
 const ProjectsContext = createContext<ProjectsContextValue | null>(null);
+const SELECTED_PROJECT_STORAGE_KEY = "selected-project-id:local-network";
 
 export function ProjectProvider({
   children,
@@ -42,7 +43,7 @@ export function ProjectProvider({
   >(null);
 
   useEffect(() => {
-    const stored = window.localStorage.getItem("selected-project-id");
+    const stored = window.localStorage.getItem(SELECTED_PROJECT_STORAGE_KEY);
     if (stored) {
       setSelectedProjectIdState(stored);
     }
@@ -59,13 +60,13 @@ export function ProjectProvider({
     ) {
       const nextId = projects[0].id;
       setSelectedProjectIdState(nextId);
-      window.localStorage.setItem("selected-project-id", nextId);
+      window.localStorage.setItem(SELECTED_PROJECT_STORAGE_KEY, nextId);
     }
   }, [projects, selectedProjectId]);
 
   const setSelectedProjectId = useCallback((id: string) => {
     setSelectedProjectIdState(id);
-    window.localStorage.setItem("selected-project-id", id);
+    window.localStorage.setItem(SELECTED_PROJECT_STORAGE_KEY, id);
   }, []);
 
   const selectedProject =

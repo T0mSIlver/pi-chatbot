@@ -4,8 +4,12 @@ import { and, asc, desc, eq, gt, lt, type SQL } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import type { ArtifactKind } from "@/components/chat/artifact";
+import {
+  LOCAL_NETWORK_USER_EMAIL,
+  LOCAL_NETWORK_USER_ID,
+  LOCAL_NETWORK_USER_NAME,
+} from "@/lib/local-network-user";
 import { ChatbotError } from "../errors";
-import { generateUUID } from "../utils";
 import {
   type Chat,
   chat,
@@ -43,20 +47,64 @@ export async function createUser(email: string, password: string) {
   }
 }
 
-export async function createGuestUser() {
-  const email = `guest-${Date.now()}`;
-  const password = generateHashedPassword(generateUUID());
-
+export async function ensureLocalNetworkUser() {
   try {
-    return await db.insert(user).values({ email, password }).returning({
-      id: user.id,
-      email: user.email,
-    });
+    const now = new Date();
+    const [localUser] = await db
+      .insert(user)
+      .values({
+        id: LOCAL_NETWORK_USER_ID,
+        email: LOCAL_NETWORK_USER_EMAIL,
+        name: LOCAL_NETWORK_USER_NAME,
+        password: null,
+        isAnonymous: true,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: user.id,
+        set: {
+          email: LOCAL_NETWORK_USER_EMAIL,
+          name: LOCAL_NETWORK_USER_NAME,
+          isAnonymous: true,
+          updatedAt: now,
+        },
+      })
+      .returning({
+        id: user.id,
+        email: user.email,
+      });
+
+    if (!localUser) {
+      throw new Error("Local network user upsert returned no rows");
+    }
+
+    return localUser;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to ensure local network user"
+    );
+  }
+}
+
+export async function createGuestUser() {
+  try {
+    const localUser = await ensureLocalNetworkUser();
+    return [{ id: localUser.id, email: localUser.email }];
   } catch (_error) {
     throw new ChatbotError(
       "bad_request:database",
       "Failed to create guest user"
     );
+  }
+}
+
+export async function getAllProjects() {
+  try {
+    return await db.select().from(project).orderBy(asc(project.createdAt));
+  } catch (_error) {
+    throw new ChatbotError("bad_request:database", "Failed to get projects");
   }
 }
 
@@ -216,6 +264,19 @@ export async function deleteChatById({ id }: { id: string }) {
   }
 }
 
+export async function deleteAllChats() {
+  try {
+    const deletedChats = await db.delete(chat).returning();
+
+    return { deletedCount: deletedChats.length, chats: deletedChats };
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to delete all chats"
+    );
+  }
+}
+
 export async function deleteAllChatsByUserId({ userId }: { userId: string }) {
   try {
     const deletedChats = await db
@@ -228,6 +289,85 @@ export async function deleteAllChatsByUserId({ userId }: { userId: string }) {
     throw new ChatbotError(
       "bad_request:database",
       "Failed to delete all chats by user id"
+    );
+  }
+}
+
+export async function getChatsByProjectId({
+  projectId,
+  limit,
+  startingAfter,
+  endingBefore,
+}: {
+  projectId: string;
+  limit: number;
+  startingAfter: string | null;
+  endingBefore: string | null;
+}) {
+  try {
+    const extendedLimit = limit + 1;
+
+    const query = (whereCondition?: SQL<unknown>) =>
+      db
+        .select()
+        .from(chat)
+        .where(
+          whereCondition
+            ? and(whereCondition, eq(chat.projectId, projectId))
+            : eq(chat.projectId, projectId)
+        )
+        .orderBy(desc(chat.createdAt))
+        .limit(extendedLimit);
+
+    let filteredChats: Chat[] = [];
+
+    if (startingAfter) {
+      const [selectedChat] = await db
+        .select()
+        .from(chat)
+        .where(eq(chat.id, startingAfter))
+        .limit(1);
+
+      if (!selectedChat) {
+        throw new ChatbotError(
+          "not_found:database",
+          `Chat with id ${startingAfter} not found`
+        );
+      }
+
+      filteredChats = await query(gt(chat.createdAt, selectedChat.createdAt));
+    } else if (endingBefore) {
+      const [selectedChat] = await db
+        .select()
+        .from(chat)
+        .where(eq(chat.id, endingBefore))
+        .limit(1);
+
+      if (!selectedChat) {
+        throw new ChatbotError(
+          "not_found:database",
+          `Chat with id ${endingBefore} not found`
+        );
+      }
+
+      filteredChats = await query(lt(chat.createdAt, selectedChat.createdAt));
+    } else {
+      filteredChats = await query();
+    }
+
+    const hasMore = filteredChats.length > limit;
+
+    return {
+      chats: hasMore ? filteredChats.slice(0, limit) : filteredChats,
+      hasMore,
+    };
+  } catch (_error) {
+    if (_error instanceof ChatbotError) {
+      throw _error;
+    }
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to get chats by project id"
     );
   }
 }

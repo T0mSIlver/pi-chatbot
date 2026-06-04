@@ -29,10 +29,6 @@ export async function PATCH(
     return new ChatbotError("not_found:chat").toResponse();
   }
 
-  if (selectedProject.userId !== session.user.id) {
-    return new ChatbotError("forbidden:chat").toResponse();
-  }
-
   let name: string;
 
   try {
@@ -61,10 +57,6 @@ export async function DELETE(
 
   if (!selectedProject) {
     return new ChatbotError("not_found:chat").toResponse();
-  }
-
-  if (selectedProject.userId !== session.user.id) {
-    return new ChatbotError("forbidden:chat").toResponse();
   }
 
   const deleted = await deleteProjectById({ id });

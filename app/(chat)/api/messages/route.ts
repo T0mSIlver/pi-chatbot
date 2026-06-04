@@ -23,7 +23,7 @@ export async function GET(request: Request) {
     });
   }
 
-  if (!session?.user || session.user.id !== chat.userId) {
+  if (!session?.user) {
     return Response.json({ error: "forbidden" }, { status: 403 });
   }
 

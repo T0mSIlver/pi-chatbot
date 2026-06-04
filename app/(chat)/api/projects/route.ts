@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { auth } from "@/app/(auth)/auth";
-import { getProjectsByUserId, saveProject } from "@/lib/db/queries";
+import {
+  ensureLocalNetworkUser,
+  getAllProjects,
+  saveProject,
+} from "@/lib/db/queries";
 import { ChatbotError } from "@/lib/errors";
 import {
   ensureProjectWorkspace,
@@ -30,10 +34,11 @@ export async function GET() {
     return new ChatbotError("unauthorized:chat").toResponse();
   }
 
-  let projects = await getProjectsByUserId({ userId: session.user.id });
+  let projects = await getAllProjects();
 
   if (projects.length === 0) {
-    const defaultProject = await createDefaultProject(session.user.id);
+    const localUser = await ensureLocalNetworkUser();
+    const defaultProject = await createDefaultProject(localUser.id);
     projects = [defaultProject];
   }
 
@@ -55,14 +60,15 @@ export async function POST(request: Request) {
     return new ChatbotError("bad_request:api").toResponse();
   }
 
+  const localUser = await ensureLocalNetworkUser();
   const id = generateUUID();
-  await ensureProjectWorkspace({ userId: session.user.id, projectId: id });
+  await ensureProjectWorkspace({ userId: localUser.id, projectId: id });
 
   const savedProject = await saveProject({
     id,
-    userId: session.user.id,
+    userId: localUser.id,
     name,
-    workspacePath: getProjectWorkspacePath(session.user.id, id),
+    workspacePath: getProjectWorkspacePath(localUser.id, id),
   });
 
   return Response.json({ project: savedProject }, { status: 201 });

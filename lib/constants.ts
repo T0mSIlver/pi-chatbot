@@ -8,7 +8,7 @@ export const isTestEnvironment = Boolean(
     process.env.CI_PLAYWRIGHT
 );
 
-export const guestRegex = /^guest-\d+$/;
+export const guestRegex = /^guest-(\d+|local-network)$/;
 
 export const DUMMY_PASSWORD = generateDummyPassword();
 

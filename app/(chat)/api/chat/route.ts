@@ -7,9 +7,10 @@ import { allowedModelIds, DEFAULT_CHAT_MODEL } from "@/lib/ai/models";
 import { isTestEnvironment } from "@/lib/constants";
 import {
   deleteChatById,
+  ensureLocalNetworkUser,
+  getAllProjects,
   getChatById,
   getProjectById,
-  getProjectsByUserId,
   saveChat,
   saveProject,
   updateChatMetadataById,
@@ -163,32 +164,36 @@ function getAssistantToolCallBlock(event: unknown) {
   };
 }
 
-async function getOrCreateProject(userId: string, requestedProjectId?: string) {
+async function getOrCreateProject(requestedProjectId?: string) {
   if (requestedProjectId) {
     const project = await getProjectById({ id: requestedProjectId });
     if (!project) {
       throw new ChatbotError("not_found:chat");
     }
-    if (project.userId !== userId) {
-      throw new ChatbotError("forbidden:chat");
-    }
-    await ensureProjectWorkspace({ userId, projectId: project.id });
+    await ensureProjectWorkspace({
+      userId: project.userId,
+      projectId: project.id,
+    });
     return project;
   }
 
-  const projects = await getProjectsByUserId({ userId });
+  const projects = await getAllProjects();
   if (projects[0]) {
-    await ensureProjectWorkspace({ userId, projectId: projects[0].id });
+    await ensureProjectWorkspace({
+      userId: projects[0].userId,
+      projectId: projects[0].id,
+    });
     return projects[0];
   }
 
+  const localUser = await ensureLocalNetworkUser();
   const id = generateUUID();
-  await ensureProjectWorkspace({ userId, projectId: id });
+  await ensureProjectWorkspace({ userId: localUser.id, projectId: id });
   return saveProject({
     id,
-    userId,
+    userId: localUser.id,
     name: "General",
-    workspacePath: getProjectWorkspacePath(userId, id),
+    workspacePath: getProjectWorkspacePath(localUser.id, id),
   });
 }
 
@@ -500,18 +505,10 @@ export async function POST(request: Request) {
     let shouldGenerateMetadata = false;
     const initialTitle = createInitialConversationTitle(requestBody.message);
 
-    if (chat) {
-      if (chat.userId !== session.user.id) {
-        locks.delete(requestBody.id);
-        return new ChatbotError("forbidden:chat").toResponse();
-      }
-    } else {
-      const project = await getOrCreateProject(
-        session.user.id,
-        requestBody.projectId
-      );
+    if (!chat) {
+      const project = await getOrCreateProject(requestBody.projectId);
       const workspace = await ensureConversationWorkspace({
-        userId: session.user.id,
+        userId: project.userId,
         projectId: project.id,
         conversationId: requestBody.id,
       });
@@ -521,7 +518,7 @@ export async function POST(request: Request) {
       if (isTestEnvironment) {
         chat = await createConversationMetadata({
           id: requestBody.id,
-          userId: session.user.id,
+          userId: project.userId,
           projectId: project.id,
           title: initialTitle,
           piSessionFilePath: path.join(
@@ -538,7 +535,7 @@ export async function POST(request: Request) {
         });
         chat = await createConversationMetadata({
           id: requestBody.id,
-          userId: session.user.id,
+          userId: project.userId,
           projectId: project.id,
           title: initialTitle,
           piSessionFilePath: piSession.sessionFile ?? "",
@@ -875,10 +872,6 @@ export async function DELETE(request: Request) {
 
   if (!chat) {
     return new ChatbotError("not_found:chat").toResponse();
-  }
-
-  if (chat.userId !== session.user.id) {
-    return new ChatbotError("forbidden:chat").toResponse();
   }
 
   const deletedChat = await deleteChatById({ id });

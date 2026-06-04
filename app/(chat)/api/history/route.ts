@@ -1,10 +1,11 @@
 import type { NextRequest } from "next/server";
 import { auth } from "@/app/(auth)/auth";
 import {
-  deleteAllChatsByUserId,
-  getChatsByUserId,
+  deleteAllChats,
+  ensureLocalNetworkUser,
+  getAllProjects,
+  getChatsByProjectId,
   getProjectById,
-  getProjectsByUserId,
   saveProject,
 } from "@/lib/db/queries";
 import { ChatbotError } from "@/lib/errors";
@@ -15,33 +16,28 @@ import {
 } from "@/lib/pi/workspace";
 import { generateUUID } from "@/lib/utils";
 
-async function getOrCreateProjectId(
-  userId: string,
-  requestedProjectId: string | null
-) {
+async function getOrCreateProjectId(requestedProjectId: string | null) {
   if (requestedProjectId) {
     const project = await getProjectById({ id: requestedProjectId });
     if (!project) {
       throw new ChatbotError("not_found:chat");
     }
-    if (project.userId !== userId) {
-      throw new ChatbotError("forbidden:chat");
-    }
     return project.id;
   }
 
-  const projects = await getProjectsByUserId({ userId });
+  const projects = await getAllProjects();
   if (projects[0]) {
     return projects[0].id;
   }
 
+  const localUser = await ensureLocalNetworkUser();
   const id = generateUUID();
-  await ensureProjectWorkspace({ userId, projectId: id });
+  await ensureProjectWorkspace({ userId: localUser.id, projectId: id });
   const project = await saveProject({
     id,
-    userId,
+    userId: localUser.id,
     name: "General",
-    workspacePath: getProjectWorkspacePath(userId, id),
+    workspacePath: getProjectWorkspacePath(localUser.id, id),
   });
   return project.id;
 }
@@ -72,7 +68,7 @@ export async function GET(request: NextRequest) {
 
   let projectId: string;
   try {
-    projectId = await getOrCreateProjectId(session.user.id, requestedProjectId);
+    projectId = await getOrCreateProjectId(requestedProjectId);
   } catch (error) {
     if (error instanceof ChatbotError) {
       return error.toResponse();
@@ -80,8 +76,7 @@ export async function GET(request: NextRequest) {
     throw error;
   }
 
-  const chats = await getChatsByUserId({
-    id: session.user.id,
+  const chats = await getChatsByProjectId({
     projectId,
     limit,
     startingAfter,
@@ -98,7 +93,7 @@ export async function DELETE() {
     return new ChatbotError("unauthorized:chat").toResponse();
   }
 
-  const result = await deleteAllChatsByUserId({ userId: session.user.id });
+  const result = await deleteAllChats();
 
   await Promise.all(
     result.chats.map((chat) => moveWorkspaceToTrash(chat.workspacePath))

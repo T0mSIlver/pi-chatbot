@@ -96,6 +96,59 @@ test.describe("Chat API Integration", () => {
     await expect(page).toHaveURL(CHAT_URL_REGEX, { timeout: 10_000 });
   });
 
+  test("shares chat history across guest browser sessions", async ({
+    browser,
+  }) => {
+    const firstContext = await browser.newContext();
+    const secondContext = await browser.newContext();
+    const firstPage = await firstContext.newPage();
+    const secondPage = await secondContext.newPage();
+
+    try {
+      const title = `Shared history ${Date.now()}`;
+
+      await gotoHomeWithProject(firstPage);
+      await firstPage.getByTestId("multimodal-input").fill(title);
+      await firstPage.getByTestId("send-button").click();
+      await expect(firstPage).toHaveURL(CHAT_URL_REGEX, { timeout: 10_000 });
+      await expect(
+        firstPage.getByText("This is a mocked Pi response")
+      ).toBeVisible({
+        timeout: 30_000,
+      });
+
+      const chatId = firstPage.url().split("/chat/").at(-1);
+      expect(chatId).toBeTruthy();
+
+      const firstMessagesResponse = await firstPage.request.get(
+        `/api/messages?chatId=${chatId}`
+      );
+      expect(firstMessagesResponse.status()).toBe(200);
+      const firstMessagesBody = (await firstMessagesResponse.json()) as {
+        projectId: string;
+      };
+
+      await gotoHomeWithProject(secondPage);
+
+      const secondMessagesResponse = await secondPage.request.get(
+        `/api/messages?chatId=${chatId}`
+      );
+      expect(secondMessagesResponse.status()).toBe(200);
+      expect(JSON.stringify(await secondMessagesResponse.json())).toContain(
+        title
+      );
+
+      const historyResponse = await secondPage.request.get(
+        `/api/history?projectId=${firstMessagesBody.projectId}&limit=20`
+      );
+      expect(historyResponse.status()).toBe(200);
+      expect(JSON.stringify(await historyResponse.json())).toContain(chatId);
+    } finally {
+      await firstContext.close();
+      await secondContext.close();
+    }
+  });
+
   test("clears input after sending", async ({ page }) => {
     await gotoHomeWithProject(page);
 
