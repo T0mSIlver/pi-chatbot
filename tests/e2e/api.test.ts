@@ -103,9 +103,10 @@ test.describe("Chat API Integration", () => {
     const secondContext = await browser.newContext();
     const firstPage = await firstContext.newPage();
     const secondPage = await secondContext.newPage();
+    let chatId: string | undefined;
 
     try {
-      const title = `Shared history ${Date.now()}`;
+      const title = `E2E cross-session verification ${Date.now()}`;
 
       await gotoHomeWithProject(firstPage);
       await firstPage.getByTestId("multimodal-input").fill(title);
@@ -117,16 +118,13 @@ test.describe("Chat API Integration", () => {
         timeout: 30_000,
       });
 
-      const chatId = firstPage.url().split("/chat/").at(-1);
+      chatId = firstPage.url().split("/chat/").at(-1);
       expect(chatId).toBeTruthy();
 
       const firstMessagesResponse = await firstPage.request.get(
         `/api/messages?chatId=${chatId}`
       );
       expect(firstMessagesResponse.status()).toBe(200);
-      const firstMessagesBody = (await firstMessagesResponse.json()) as {
-        projectId: string;
-      };
 
       await gotoHomeWithProject(secondPage);
 
@@ -139,11 +137,14 @@ test.describe("Chat API Integration", () => {
       );
 
       const historyResponse = await secondPage.request.get(
-        `/api/history?projectId=${firstMessagesBody.projectId}&limit=20`
+        "/api/history?limit=20"
       );
       expect(historyResponse.status()).toBe(200);
       expect(JSON.stringify(await historyResponse.json())).toContain(chatId);
     } finally {
+      if (chatId) {
+        await firstPage.request.delete(`/api/chat?id=${chatId}`);
+      }
       await firstContext.close();
       await secondContext.close();
     }

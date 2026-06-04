@@ -4,7 +4,6 @@ import { FilesIcon, PanelLeftIcon } from "lucide-react";
 import { memo } from "react";
 import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/ui/sidebar";
-import { useProjects } from "@/hooks/use-projects";
 
 function PureChatHeader({
   chatId: _chatId,
@@ -18,7 +17,6 @@ function PureChatHeader({
   onToggleWorkbench: () => void;
 }) {
   const { toggleSidebar } = useSidebar();
-  const { selectedProject } = useProjects();
 
   return (
     <header className="sticky top-0 flex h-14 items-center gap-2 bg-sidebar px-3">
@@ -32,7 +30,7 @@ function PureChatHeader({
       </Button>
 
       <div className="min-w-0 truncate text-[13px] font-medium text-sidebar-foreground/70">
-        {selectedProject?.name ?? "General"}
+        All conversations
       </div>
       <Button
         aria-label={isWorkbenchOpen ? "Close files" : "Open files"}

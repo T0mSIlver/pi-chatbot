@@ -279,7 +279,7 @@ export function usePiChat() {
   const pathname = usePathname();
   const router = useRouter();
   const { mutate } = useSWRConfig();
-  const { selectedProjectId, setSelectedProjectId } = useProjects();
+  const { setSelectedProjectId } = useProjects();
 
   const chatIdFromUrl = extractChatId(pathname);
   const isNewChat = !chatIdFromUrl;
@@ -410,15 +410,11 @@ export function usePiChat() {
   const refreshHistory = useCallback(() => {
     mutate(
       unstable_serialize((pageIndex: number, previousPageData: ChatHistory) =>
-        getChatHistoryPaginationKey(
-          pageIndex,
-          previousPageData,
-          selectedProjectId
-        )
+        getChatHistoryPaginationKey(pageIndex, previousPageData)
       )
     );
     mutate((key) => typeof key === "string" && key.includes("/api/history"));
-  }, [mutate, selectedProjectId]);
+  }, [mutate]);
 
   const resolveRestoreConfirmation = useCallback((confirmed: boolean) => {
     const resolver = restoreConfirmationResolverRef.current;
@@ -535,16 +531,10 @@ export function usePiChat() {
   const sendMessage: SendMessage = useCallback(
     async (message, options) => {
       const targetChatId = chatId;
-      const targetProjectId = selectedProjectId;
       const targetModelId = currentModelId;
       const targetMessagesKey = `${
         process.env.NEXT_PUBLIC_BASE_PATH ?? ""
       }/api/messages?chatId=${targetChatId}`;
-
-      if (!targetProjectId) {
-        toast.error("Select a project before sending a message.");
-        return false;
-      }
 
       if (abortControllersRef.current.has(targetChatId)) {
         toast.error("This conversation is already running.");
@@ -637,7 +627,6 @@ export function usePiChat() {
             method: "POST",
             body: JSON.stringify({
               id: targetChatId,
-              projectId: targetProjectId,
               message: userMessage,
               selectedChatModel: targetModelId,
               branchFromEntryId: editOptions?.branchFromEntryId,
@@ -730,7 +719,6 @@ export function usePiChat() {
       mutate,
       refreshHistory,
       restoreCurrentWorkspace,
-      selectedProjectId,
       setChatMessages,
       updateChatRuntimeState,
     ]

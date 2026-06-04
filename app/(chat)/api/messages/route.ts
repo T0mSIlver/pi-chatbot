@@ -32,9 +32,27 @@ export async function GET(request: Request) {
     chat.id,
     chat.workspacePath
   );
+  const safeMessages =
+    messages.length > 0
+      ? messages
+      : [
+          {
+            id: `missing-transcript-${chat.id}`,
+            role: "assistant" as const,
+            parts: [
+              {
+                type: "text" as const,
+                text: "This conversation exists in the database, but its transcript file is not available on this machine.",
+              },
+            ],
+            metadata: {
+              createdAt: chat.createdAt.toISOString(),
+            },
+          },
+        ];
 
   return Response.json({
-    messages,
+    messages: safeMessages,
     projectId: chat.projectId,
     userId: chat.userId,
     isReadonly: false,

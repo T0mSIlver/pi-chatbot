@@ -9,7 +9,7 @@ test.describe("Chat Page", () => {
   test("project selector is visible", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("project-selector")).toBeVisible();
-    await expect(page.getByText("General")).toBeVisible();
+    await expect(page.getByText("All conversations")).toBeVisible();
   });
 
   test("can type in the input field", async ({ page }) => {

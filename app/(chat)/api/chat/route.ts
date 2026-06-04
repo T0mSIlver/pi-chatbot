@@ -7,12 +7,10 @@ import { allowedModelIds, DEFAULT_CHAT_MODEL } from "@/lib/ai/models";
 import { isTestEnvironment } from "@/lib/constants";
 import {
   deleteChatById,
-  ensureLocalNetworkUser,
-  getAllProjects,
+  ensureLocalNetworkProject,
   getChatById,
   getProjectById,
   saveChat,
-  saveProject,
   updateChatMetadataById,
   updateChatPiSessionFilePathById,
 } from "@/lib/db/queries";
@@ -26,7 +24,6 @@ import {
   ensureConversationWorkspace,
   ensureProjectWorkspace,
   getConversationWorkspacePath,
-  getProjectWorkspacePath,
   moveWorkspaceToTrash,
 } from "@/lib/pi/workspace";
 import {
@@ -41,7 +38,7 @@ import {
   writeWorkspaceChanges,
 } from "@/lib/pi/workspace-files";
 import { checkIpRateLimit } from "@/lib/ratelimit";
-import { generateUUID, getTextFromMessage } from "@/lib/utils";
+import { getTextFromMessage } from "@/lib/utils";
 import { type PostRequestBody, postRequestBodySchema } from "./schema";
 
 export const maxDuration = 300;
@@ -177,24 +174,7 @@ async function getOrCreateProject(requestedProjectId?: string) {
     return project;
   }
 
-  const projects = await getAllProjects();
-  if (projects[0]) {
-    await ensureProjectWorkspace({
-      userId: projects[0].userId,
-      projectId: projects[0].id,
-    });
-    return projects[0];
-  }
-
-  const localUser = await ensureLocalNetworkUser();
-  const id = generateUUID();
-  await ensureProjectWorkspace({ userId: localUser.id, projectId: id });
-  return saveProject({
-    id,
-    userId: localUser.id,
-    name: "General",
-    workspacePath: getProjectWorkspacePath(localUser.id, id),
-  });
+  return ensureLocalNetworkProject();
 }
 
 async function imagePartToPiImage(part: { url: string; mediaType: string }) {

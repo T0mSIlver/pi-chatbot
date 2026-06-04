@@ -1,20 +1,12 @@
 import type { NextRequest } from "next/server";
 import { auth } from "@/app/(auth)/auth";
 import {
-  deleteAllChats,
-  ensureLocalNetworkUser,
-  getAllProjects,
+  ensureLocalNetworkProject,
+  getAllChats,
   getChatsByProjectId,
   getProjectById,
-  saveProject,
 } from "@/lib/db/queries";
 import { ChatbotError } from "@/lib/errors";
-import {
-  ensureProjectWorkspace,
-  getProjectWorkspacePath,
-  moveWorkspaceToTrash,
-} from "@/lib/pi/workspace";
-import { generateUUID } from "@/lib/utils";
 
 async function getOrCreateProjectId(requestedProjectId: string | null) {
   if (requestedProjectId) {
@@ -25,20 +17,7 @@ async function getOrCreateProjectId(requestedProjectId: string | null) {
     return project.id;
   }
 
-  const projects = await getAllProjects();
-  if (projects[0]) {
-    return projects[0].id;
-  }
-
-  const localUser = await ensureLocalNetworkUser();
-  const id = generateUUID();
-  await ensureProjectWorkspace({ userId: localUser.id, projectId: id });
-  const project = await saveProject({
-    id,
-    userId: localUser.id,
-    name: "General",
-    workspacePath: getProjectWorkspacePath(localUser.id, id),
-  });
+  const project = await ensureLocalNetworkProject();
   return project.id;
 }
 
@@ -76,28 +55,25 @@ export async function GET(request: NextRequest) {
     throw error;
   }
 
-  const chats = await getChatsByProjectId({
-    projectId,
-    limit,
-    startingAfter,
-    endingBefore,
-  });
+  const chats = requestedProjectId
+    ? await getChatsByProjectId({
+        projectId,
+        limit,
+        startingAfter,
+        endingBefore,
+      })
+    : await getAllChats({
+        limit,
+        startingAfter,
+        endingBefore,
+      });
 
   return Response.json({ ...chats, projectId });
 }
 
-export async function DELETE() {
-  const session = await auth();
-
-  if (!session?.user) {
-    return new ChatbotError("unauthorized:chat").toResponse();
-  }
-
-  const result = await deleteAllChats();
-
-  await Promise.all(
-    result.chats.map((chat) => moveWorkspaceToTrash(chat.workspacePath))
-  );
-
-  return Response.json({ deletedCount: result.deletedCount }, { status: 200 });
+export function DELETE() {
+  return new ChatbotError(
+    "bad_request:api",
+    "Bulk chat deletion is disabled for shared local history."
+  ).toResponse();
 }

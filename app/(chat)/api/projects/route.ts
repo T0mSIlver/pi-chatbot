@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { auth } from "@/app/(auth)/auth";
 import {
+  ensureLocalNetworkProject,
   ensureLocalNetworkUser,
-  getAllProjects,
   saveProject,
 } from "@/lib/db/queries";
 import { ChatbotError } from "@/lib/errors";
@@ -16,17 +16,6 @@ const createProjectSchema = z.object({
   name: z.string().trim().min(1).max(80),
 });
 
-async function createDefaultProject(userId: string) {
-  const id = generateUUID();
-  await ensureProjectWorkspace({ userId, projectId: id });
-  return saveProject({
-    id,
-    userId,
-    name: "General",
-    workspacePath: getProjectWorkspacePath(userId, id),
-  });
-}
-
 export async function GET() {
   const session = await auth();
 
@@ -34,15 +23,9 @@ export async function GET() {
     return new ChatbotError("unauthorized:chat").toResponse();
   }
 
-  let projects = await getAllProjects();
+  const project = await ensureLocalNetworkProject();
 
-  if (projects.length === 0) {
-    const localUser = await ensureLocalNetworkUser();
-    const defaultProject = await createDefaultProject(localUser.id);
-    projects = [defaultProject];
-  }
-
-  return Response.json({ projects });
+  return Response.json({ projects: [project] });
 }
 
 export async function POST(request: Request) {

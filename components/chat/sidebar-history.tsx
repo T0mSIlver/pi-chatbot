@@ -25,7 +25,6 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { useActiveChat } from "@/hooks/use-active-chat";
-import { useProjects } from "@/hooks/use-projects";
 import {
   type ChatHistory,
   getChatHistoryPaginationKey,
@@ -79,7 +78,6 @@ const groupChatsByDate = (chats: Chat[]): GroupedChats => {
 export function SidebarHistory({ user }: { user: User | undefined }) {
   const { setOpenMobile } = useSidebar();
   const { runningChatIds } = useActiveChat();
-  const { selectedProjectId } = useProjects();
   const pathname = usePathname();
   const id = pathname?.startsWith("/chat/") ? pathname.split("/")[2] : null;
   const runningChatIdSet = new Set(runningChatIds);
@@ -91,13 +89,9 @@ export function SidebarHistory({ user }: { user: User | undefined }) {
     isLoading,
     mutate,
   } = useSWRInfinite<ChatHistory>(
-    user && selectedProjectId
+    user
       ? (pageIndex, previousPageData) =>
-          getChatHistoryPaginationKey(
-            pageIndex,
-            previousPageData,
-            selectedProjectId
-          )
+          getChatHistoryPaginationKey(pageIndex, previousPageData)
       : () => null,
     fetcher,
     { fallbackData: [], revalidateOnFocus: false }
