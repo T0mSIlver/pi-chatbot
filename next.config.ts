@@ -26,6 +26,7 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   reactCompiler: true,
   serverExternalPackages: [
+    "@mariozechner/pi-ai",
     "@mariozechner/pi-coding-agent",
     "@mariozechner/clipboard",
   ],

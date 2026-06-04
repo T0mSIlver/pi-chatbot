@@ -40,6 +40,7 @@ export const chat = pgTable("Chat", {
   createdAt: timestamp("createdAt").notNull().defaultNow(),
   updatedAt: timestamp("updatedAt").notNull().defaultNow(),
   title: text("title").notNull(),
+  summary: text("summary"),
   projectId: uuid("projectId")
     .notNull()
     .references(() => project.id, { onDelete: "cascade" }),

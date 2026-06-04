@@ -23,6 +23,9 @@ importers:
       '@codemirror/view':
         specifier: ^6.35.3
         version: 6.36.4
+      '@mariozechner/pi-ai':
+        specifier: 0.70.6
+        version: 0.70.6(bufferutil@4.0.9)(ws@8.18.1(bufferutil@4.0.9))(zod@3.25.76)
       '@mariozechner/pi-coding-agent':
         specifier: 0.70.2
         version: 0.70.2(bufferutil@4.0.9)(ws@8.18.1(bufferutil@4.0.9))(zod@3.25.76)

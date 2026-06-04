@@ -168,6 +168,7 @@ export async function saveChat({
   userId,
   projectId,
   title,
+  summary,
   workspacePath,
   piSessionFilePath,
 }: {
@@ -175,6 +176,7 @@ export async function saveChat({
   userId: string;
   projectId: string;
   title: string;
+  summary?: string | null;
   workspacePath: string;
   piSessionFilePath: string;
 }) {
@@ -188,6 +190,7 @@ export async function saveChat({
         userId,
         projectId,
         title,
+        summary: summary ?? null,
         workspacePath,
         piSessionFilePath,
       })
@@ -334,6 +337,25 @@ export async function updateChatTitleById({
     return await db
       .update(chat)
       .set({ title, updatedAt: new Date() })
+      .where(eq(chat.id, chatId));
+  } catch (_error) {
+    return;
+  }
+}
+
+export async function updateChatMetadataById({
+  chatId,
+  title,
+  summary,
+}: {
+  chatId: string;
+  title: string;
+  summary: string;
+}) {
+  try {
+    return await db
+      .update(chat)
+      .set({ title, summary, updatedAt: new Date() })
       .where(eq(chat.id, chatId));
   } catch (_error) {
     return;

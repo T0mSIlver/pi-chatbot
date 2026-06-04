@@ -56,6 +56,7 @@ export async function POST(request: Request) {
       userId: sourceChat.userId,
       projectId: sourceChat.projectId,
       title: `${sourceChat.title} (branch)`,
+      summary: sourceChat.summary,
       workspacePath: getConversationWorkspacePath({
         userId: sourceChat.userId,
         projectId: sourceChat.projectId,

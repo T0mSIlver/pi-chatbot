@@ -12,11 +12,12 @@ import {
   getProjectsByUserId,
   saveChat,
   saveProject,
+  updateChatMetadataById,
   updateChatPiSessionFilePathById,
-  updateChatTitleById,
 } from "@/lib/db/queries";
 import type { Chat } from "@/lib/db/schema";
 import { ChatbotError } from "@/lib/errors";
+import { generateConversationMetadata } from "@/lib/pi/conversation-metadata";
 import type { PiStreamEvent } from "@/lib/pi/events";
 import { piEntriesToChatMessages } from "@/lib/pi/jsonl";
 import { createPiSdkSession } from "@/lib/pi/session";
@@ -51,17 +52,6 @@ declare global {
 
 const locks = globalThis.__piConversationLocks ?? new Set<string>();
 globalThis.__piConversationLocks = locks;
-
-function titleFromMessage(message: PostRequestBody["message"]) {
-  return (
-    getTextFromMessage(message)
-      .replace(/^[#*"\s]+/, "")
-      .replace(/["]+$/, "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 80) || "New conversation"
-  );
-}
 
 function writeNdjson(
   controller: ReadableStreamDefaultController<Uint8Array>,
@@ -261,14 +251,12 @@ function currentCheckpointId(sessionManager: SessionManager) {
 async function runMockPiTurn({
   chat,
   message,
-  title,
   branchFromEntryId,
   controller,
   encoder,
 }: {
   chat: Chat;
   message: PostRequestBody["message"];
-  title: string | null;
   branchFromEntryId?: string | null;
   controller: ReadableStreamDefaultController<Uint8Array>;
   encoder: TextEncoder;
@@ -384,9 +372,6 @@ async function runMockPiTurn({
     ].join("")
   );
 
-  if (title) {
-    writeNdjson(controller, encoder, { type: "title", title });
-  }
   if (shouldMockInterleavedThinking) {
     writeNdjson(controller, encoder, {
       type: "thinking-delta",
@@ -444,6 +429,8 @@ async function runMockPiTurn({
     sessionFilePath,
     messages: piEntriesToChatMessages(sessionManager.getBranch(), chat.id),
   });
+
+  return sessionManager.getBranch();
 }
 
 export async function POST(request: Request) {
@@ -481,7 +468,7 @@ export async function POST(request: Request) {
 
   try {
     let chat = await getChatById({ id: requestBody.id });
-    let title: string | null = null;
+    let shouldGenerateMetadata = false;
 
     if (chat) {
       if (chat.userId !== session.user.id) {
@@ -499,14 +486,14 @@ export async function POST(request: Request) {
         conversationId: requestBody.id,
       });
 
-      title = titleFromMessage(requestBody.message);
+      shouldGenerateMetadata = true;
 
       if (isTestEnvironment) {
         chat = await createConversationMetadata({
           id: requestBody.id,
           userId: session.user.id,
           projectId: project.id,
-          title,
+          title: "New conversation",
           piSessionFilePath: path.join(
             workspace.conversationPath,
             "pi-session.jsonl"
@@ -523,7 +510,7 @@ export async function POST(request: Request) {
           id: requestBody.id,
           userId: session.user.id,
           projectId: project.id,
-          title,
+          title: "New conversation",
           piSessionFilePath: piSession.sessionFile ?? "",
         });
         piSession.dispose();
@@ -558,15 +545,32 @@ export async function POST(request: Request) {
           };
 
           if (isTestEnvironment) {
-            await runMockPiTurn({
+            const entries = await runMockPiTurn({
               chat,
               message: requestBody.message,
-              title,
               branchFromEntryId: requestBody.branchFromEntryId,
               controller,
               encoder,
             });
             await persistWorkspaceChanges();
+            if (shouldGenerateMetadata) {
+              const metadata = await generateConversationMetadata({
+                entries,
+                selectedModelId: selectedChatModel,
+                signal: request.signal,
+              });
+              if (metadata) {
+                await updateChatMetadataById({
+                  chatId: chat.id,
+                  title: metadata.title,
+                  summary: metadata.summary,
+                });
+                writeNdjson(controller, encoder, {
+                  type: "title",
+                  title: metadata.title,
+                });
+              }
+            }
             controller.close();
             return;
           }
@@ -737,11 +741,6 @@ export async function POST(request: Request) {
             }
           });
 
-          if (title) {
-            await updateChatTitleById({ chatId: chat.id, title });
-            writeNdjson(controller, encoder, { type: "title", title });
-          }
-
           await piSession.sendUserMessage(
             await buildPiUserContent(requestBody.message)
           );
@@ -753,6 +752,25 @@ export async function POST(request: Request) {
           });
 
           await persistWorkspaceChanges();
+
+          if (shouldGenerateMetadata) {
+            const metadata = await generateConversationMetadata({
+              entries: piSession.sessionManager.getBranch(),
+              selectedModelId: selectedChatModel,
+              signal: request.signal,
+            });
+            if (metadata) {
+              await updateChatMetadataById({
+                chatId: chat.id,
+                title: metadata.title,
+                summary: metadata.summary,
+              });
+              writeNdjson(controller, encoder, {
+                type: "title",
+                title: metadata.title,
+              });
+            }
+          }
 
           writeNdjson(controller, encoder, {
             type: "done",
