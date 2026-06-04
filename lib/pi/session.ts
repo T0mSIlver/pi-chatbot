@@ -6,6 +6,7 @@ import {
   DefaultResourceLoader,
   SessionManager,
 } from "@mariozechner/pi-coding-agent";
+import { createFetchWebpageTool } from "./fetch-webpage-tool";
 import { createPiModelRegistry, findPiModel } from "./model";
 import { createShowcaseFileTool } from "./showcase-tool";
 
@@ -52,6 +53,7 @@ export async function createPiSdkSession({
     agentDir,
     authStorage,
     customTools: [
+      createFetchWebpageTool(),
       createShowcaseFileTool({
         chatId,
         conversationPath: workspacePath,
