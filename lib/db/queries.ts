@@ -353,12 +353,50 @@ export async function updateChatMetadataById({
   summary: string;
 }) {
   try {
-    return await db
+    const [updatedChat] = await db
       .update(chat)
       .set({ title, summary, updatedAt: new Date() })
-      .where(eq(chat.id, chatId));
-  } catch (_error) {
-    return;
+      .where(eq(chat.id, chatId))
+      .returning({
+        id: chat.id,
+        summary: chat.summary,
+        title: chat.title,
+      });
+
+    if (!updatedChat) {
+      console.warn("[conversation-metadata-db]", {
+        chatId,
+        event: "update_no_rows",
+        summaryChars: summary.length,
+        title,
+      });
+      return null;
+    }
+
+    console.info("[conversation-metadata-db]", {
+      chatId,
+      event: "update_ok",
+      summaryChars: updatedChat.summary?.length ?? 0,
+      title: updatedChat.title,
+    });
+
+    return updatedChat;
+  } catch (error) {
+    console.error("[conversation-metadata-db]", {
+      chatId,
+      error:
+        error instanceof Error
+          ? {
+              message: error.message,
+              name: error.name,
+              stack: error.stack,
+            }
+          : { message: String(error) },
+      event: "update_failed",
+      summaryChars: summary.length,
+      title,
+    });
+    return null;
   }
 }
 

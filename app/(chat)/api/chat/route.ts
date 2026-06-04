@@ -592,6 +592,7 @@ export async function POST(request: Request) {
             await persistWorkspaceChanges();
             if (shouldGenerateMetadata) {
               const metadata = await generateConversationMetadata({
+                chatId: chat.id,
                 entries,
                 selectedModelId: selectedChatModel,
                 signal: request.signal,
@@ -792,6 +793,7 @@ export async function POST(request: Request) {
 
           if (shouldGenerateMetadata) {
             const metadata = await generateConversationMetadata({
+              chatId: chat.id,
               entries: piSession.sessionManager.getBranch(),
               selectedModelId: selectedChatModel,
               signal: request.signal,

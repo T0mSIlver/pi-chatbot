@@ -26,6 +26,32 @@ const rawMetadataSchema = z.object({
   summary: z.string().optional().catch(""),
 });
 
+type MetadataLogLevel = "info" | "warn" | "error";
+
+function logConversationMetadata(
+  level: MetadataLogLevel,
+  event: string,
+  details: Record<string, unknown>
+) {
+  console[level]("[conversation-metadata]", { event, ...details });
+}
+
+function errorDetails(error: unknown) {
+  if (error instanceof Error) {
+    return {
+      message: error.message,
+      name: error.name,
+      stack: error.stack,
+    };
+  }
+
+  return { message: String(error) };
+}
+
+function previewText(value: string) {
+  return value.length > 1000 ? `${value.slice(0, 1000)}...` : value;
+}
+
 function clampTranscript(transcript: string) {
   if (transcript.length <= MAX_TRANSCRIPT_CHARS) {
     return transcript;
@@ -100,7 +126,10 @@ function normalizeMetadata({
   });
 }
 
-function parseMetadata(text: string): ConversationMetadata {
+function parseMetadata(text: string): {
+  metadata: ConversationMetadata;
+  parser: "json" | "text";
+} {
   const unwrapped = text
     .trim()
     .replace(/^```(?:json)?/i, "")
@@ -113,10 +142,13 @@ function parseMetadata(text: string): ConversationMetadata {
 
   try {
     const parsed = rawMetadataSchema.parse(JSON.parse(jsonText));
-    return normalizeMetadata({
-      title: parsed.title ?? "",
-      summary: parsed.summary ?? "",
-    });
+    return {
+      metadata: normalizeMetadata({
+        title: parsed.title ?? "",
+        summary: parsed.summary ?? "",
+      }),
+      parser: "json",
+    };
   } catch {
     const title =
       unwrapped.match(/(?:^|\n)\s*title\s*[:=-]\s*(.+)/i)?.[1] ??
@@ -132,7 +164,10 @@ function parseMetadata(text: string): ConversationMetadata {
         .join(" ") ??
       "";
 
-    return normalizeMetadata({ title, summary });
+    return {
+      metadata: normalizeMetadata({ title, summary }),
+      parser: "text",
+    };
   }
 }
 
@@ -161,19 +196,28 @@ function fallbackConversationMetadata(entries: SessionEntry[]) {
 }
 
 export async function generateConversationMetadata({
+  chatId,
   entries,
   selectedModelId,
   signal,
 }: {
+  chatId: string;
   entries: SessionEntry[];
   selectedModelId?: string;
   signal?: AbortSignal;
 }): Promise<ConversationMetadata | null> {
+  const logBase = { chatId, selectedModelId };
+
   if (entries.length === 0) {
+    logConversationMetadata("warn", "skipped_empty_entries", logBase);
     return null;
   }
 
   if (isTestEnvironment) {
+    logConversationMetadata("info", "using_test_fallback", {
+      ...logBase,
+      entries: entries.length,
+    });
     return fallbackConversationMetadata(entries);
   }
 
@@ -182,20 +226,52 @@ export async function generateConversationMetadata({
   const metadataAbort = createMetadataSignal(signal);
 
   try {
-    const transcript = clampTranscript(
-      serializeConversation(convertToLlm(buildSessionContext(entries).messages))
+    const fullTranscript = serializeConversation(
+      convertToLlm(buildSessionContext(entries).messages)
     );
+    const transcript = clampTranscript(fullTranscript);
+    logConversationMetadata("info", "started", {
+      ...logBase,
+      entries: entries.length,
+      parentSignalAborted: Boolean(signal?.aborted),
+      transcriptChars: fullTranscript.length,
+      clampedTranscriptChars: transcript.length,
+      timeoutMs: METADATA_TIMEOUT_MS,
+    });
+
     const { modelRegistry } = createPiModelRegistry();
     const model = findPiModel({ modelRegistry, selectedModelId });
 
     if (!model) {
+      logConversationMetadata("warn", "model_not_found_using_fallback", {
+        ...logBase,
+        fallbackTitle: fallbackMetadata.title,
+      });
       return fallbackMetadata;
     }
 
+    logConversationMetadata("info", "model_selected", {
+      ...logBase,
+      modelId: model.id,
+      modelProvider: model.provider,
+      reasoning: Boolean(model.reasoning),
+    });
+
     const auth = await modelRegistry.getApiKeyAndHeaders(model);
     if (!auth.ok) {
+      logConversationMetadata("warn", "auth_failed_using_fallback", {
+        ...logBase,
+        modelId: model.id,
+        fallbackTitle: fallbackMetadata.title,
+      });
       return fallbackMetadata;
     }
+
+    logConversationMetadata("info", "auth_ok", {
+      ...logBase,
+      modelId: model.id,
+      hasHeaders: Boolean(auth.headers),
+    });
 
     const response = await completeSimple(
       model,
@@ -236,7 +312,19 @@ ${transcript}
       }
     );
 
+    logConversationMetadata("info", "llm_response", {
+      ...logBase,
+      modelId: model.id,
+      stopReason: response.stopReason,
+      contentParts: response.content.length,
+    });
+
     if (response.stopReason === "error") {
+      logConversationMetadata("warn", "llm_error_stop_using_fallback", {
+        ...logBase,
+        modelId: model.id,
+        fallbackTitle: fallbackMetadata.title,
+      });
       return fallbackMetadata;
     }
 
@@ -248,9 +336,40 @@ ${transcript}
       .join("\n")
       .trim();
 
-    return text ? parseMetadata(text) : fallbackMetadata;
+    if (!text) {
+      logConversationMetadata("warn", "empty_llm_text_using_fallback", {
+        ...logBase,
+        modelId: model.id,
+        fallbackTitle: fallbackMetadata.title,
+      });
+      return fallbackMetadata;
+    }
+
+    logConversationMetadata("info", "raw_llm_text", {
+      ...logBase,
+      modelId: model.id,
+      chars: text.length,
+      preview: previewText(text),
+    });
+
+    const parsed = parseMetadata(text);
+    logConversationMetadata("info", "parsed", {
+      ...logBase,
+      modelId: model.id,
+      parser: parsed.parser,
+      title: parsed.metadata.title,
+      summaryChars: parsed.metadata.summary.length,
+    });
+
+    return parsed.metadata;
   } catch (error) {
-    console.error("Failed to generate conversation metadata:", error);
+    logConversationMetadata("error", "failed_using_fallback", {
+      ...logBase,
+      error: errorDetails(error),
+      fallbackTitle: fallbackMetadata.title,
+      metadataSignalAborted: metadataAbort.signal.aborted,
+      parentSignalAborted: Boolean(signal?.aborted),
+    });
     return fallbackMetadata;
   } finally {
     metadataAbort.dispose();
