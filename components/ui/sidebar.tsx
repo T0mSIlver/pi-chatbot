@@ -179,7 +179,7 @@ function Sidebar({
           data-sidebar="sidebar"
           data-slot="sidebar"
           data-mobile="true"
-          className="inset-x-0 bottom-0 top-auto h-[70dvh] w-full rounded-t-2xl border-t border-border/30 bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden"
+          className="inset-x-0 bottom-0 top-auto !h-[70dvh] max-h-[70dvh] w-full overflow-hidden rounded-t-2xl border-t border-border/30 bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden"
           showCloseButton={false}
           side="bottom"
         >
@@ -188,7 +188,7 @@ function Sidebar({
             <SheetDescription>Displays the mobile sidebar.</SheetDescription>
           </SheetHeader>
           <div className="mx-auto mt-2 h-1 w-10 rounded-full bg-sidebar-foreground/20" />
-          <div className="flex h-full w-full flex-col overflow-y-auto pt-2">{children}</div>
+          <div className="flex h-full min-h-0 w-full flex-col overflow-hidden pt-2">{children}</div>
         </SheetContent>
       </Sheet>
     )
