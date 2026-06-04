@@ -1,4 +1,8 @@
-import type { PiToolUIPart, WorkspaceDisplayIntent } from "@/lib/types";
+import type {
+  ChatMessage,
+  PiToolUIPart,
+  WorkspaceDisplayIntent,
+} from "@/lib/types";
 
 export type PiStreamEvent =
   | { type: "text-delta"; delta: string }
@@ -38,7 +42,7 @@ export type PiStreamEvent =
     }
   | { type: "workspace-display"; intent: WorkspaceDisplayIntent }
   | { type: "title"; title: string }
-  | { type: "done"; sessionFilePath?: string }
+  | { type: "done"; sessionFilePath?: string; messages?: ChatMessage[] }
   | { type: "error"; message: string };
 
 export function toolEventToPart(

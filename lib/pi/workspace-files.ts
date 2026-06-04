@@ -43,7 +43,7 @@ const WORKSPACE_DISPLAY_MODES = new Set([
   "html_app",
 ]);
 
-type WorkspaceRoots = {
+export type WorkspaceRoots = {
   conversationPath: string;
   sharedPath: string;
 };

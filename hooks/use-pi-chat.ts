@@ -1,6 +1,6 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import useSWR, { useSWRConfig } from "swr";
@@ -12,6 +12,7 @@ import type {
   PiToolUIPart,
   SendMessage,
   SetMessages,
+  WorkspaceChange,
   WorkspaceDisplayIntent,
 } from "@/lib/types";
 import { fetcher, generateUUID } from "@/lib/utils";
@@ -20,6 +21,39 @@ import { useProjects } from "./use-projects";
 function extractChatId(pathname: string): string | null {
   const match = pathname.match(/\/chat\/([^/]+)/);
   return match ? match[1] : null;
+}
+
+const ROOT_CHECKPOINT_ID = "root";
+
+type PendingEdit = {
+  messageId: string;
+  branchFromEntryId: string | null;
+  checkpointId: string;
+  originalText: string;
+};
+
+type RestorePlan = {
+  checkpointId: string;
+  changes: WorkspaceChange[];
+  missingCheckpoint: boolean;
+};
+
+function textFromMessage(message: ChatMessage) {
+  return message.parts
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("\n")
+    .trim();
+}
+
+function replayableUserParts(message: ChatMessage) {
+  return message.parts.filter(
+    (part) => part.type === "text" || part.type === "file"
+  );
+}
+
+function checkpointBefore(message: ChatMessage) {
+  return message.metadata?.parentId ?? ROOT_CHECKPOINT_ID;
 }
 
 function mergeTextDelta(message: ChatMessage, delta: string) {
@@ -212,6 +246,7 @@ async function* readNdjson(stream: ReadableStream<Uint8Array>) {
 
 export function usePiChat() {
   const pathname = usePathname();
+  const router = useRouter();
   const { mutate } = useSWRConfig();
   const { selectedProjectId, setSelectedProjectId } = useProjects();
 
@@ -229,10 +264,18 @@ export function usePiChat() {
   const [messages, setMessagesState] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<ChatStatus>("ready");
   const [input, setInput] = useState("");
+  const [pendingEdit, setPendingEdit] = useState<PendingEdit | null>(null);
   const [currentModelId, setCurrentModelId] = useState(DEFAULT_CHAT_MODEL);
   const [latestWorkspaceDisplayIntent, setLatestWorkspaceDisplayIntent] =
     useState<WorkspaceDisplayIntent | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const pendingEditRef = useRef<PendingEdit | null>(null);
+  const restoreConfirmationResolverRef = useRef<
+    ((confirmed: boolean) => void) | null
+  >(null);
+  const [restoreConfirmationChanges, setRestoreConfirmationChanges] = useState<
+    WorkspaceChange[] | null
+  >(null);
   // Tracks which chat the in-memory `messages` belong to so we only hydrate
   // from the server when the user actually switches chats — not on every
   // status change, which would clobber a freshly streamed reply with stale
@@ -240,6 +283,8 @@ export function usePiChat() {
   const loadedChatIdRef = useRef<string | null>(null);
 
   const messagesKey = `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/messages?chatId=${chatId}`;
+
+  pendingEditRef.current = pendingEdit;
 
   const { data: chatData, isLoading } = useSWR(
     isNewChat ? null : messagesKey,
@@ -259,6 +304,7 @@ export function usePiChat() {
       if (loadedChatIdRef.current !== chatId) {
         setMessagesState([]);
         setLatestWorkspaceDisplayIntent(null);
+        setPendingEdit(null);
         loadedChatIdRef.current = chatId;
       }
       return;
@@ -270,6 +316,7 @@ export function usePiChat() {
     if (chatData?.messages && loadedChatIdRef.current !== chatId) {
       setMessagesState(chatData.messages);
       setLatestWorkspaceDisplayIntent(null);
+      setPendingEdit(null);
       loadedChatIdRef.current = chatId;
     }
     if (chatData?.projectId) {
@@ -287,18 +334,165 @@ export function usePiChat() {
     mutate((key) => typeof key === "string" && key.includes("/api/history"));
   }, [mutate]);
 
-  const sendMessage: SendMessage = useCallback(
-    async (message) => {
-      if (!selectedProjectId) {
-        toast.error("Select a project before sending a message.");
-        return;
+  const resolveRestoreConfirmation = useCallback((confirmed: boolean) => {
+    const resolver = restoreConfirmationResolverRef.current;
+    restoreConfirmationResolverRef.current = null;
+    setRestoreConfirmationChanges(null);
+    resolver?.(confirmed);
+  }, []);
+
+  const requestRestoreConfirmation = useCallback(
+    (changes: WorkspaceChange[]) =>
+      new Promise<boolean>((resolve) => {
+        restoreConfirmationResolverRef.current?.(false);
+        restoreConfirmationResolverRef.current = resolve;
+        setRestoreConfirmationChanges(changes);
+      }),
+    []
+  );
+
+  useEffect(
+    () => () => {
+      restoreConfirmationResolverRef.current?.(false);
+      restoreConfirmationResolverRef.current = null;
+    },
+    []
+  );
+
+  const planRestore = useCallback(
+    async (
+      checkpointId: string,
+      destination: "current" | "new-chat" = "current"
+    ) => {
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/workspace/restore/plan`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            chatId,
+            checkpointId,
+            destination,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        throw new Error(error?.cause || error?.message || "Restore failed");
       }
 
+      return (await response.json()) as RestorePlan;
+    },
+    [chatId]
+  );
+
+  const confirmRestorePlan = useCallback(
+    async (
+      checkpointId: string,
+      destination: "current" | "new-chat" = "current"
+    ) => {
+      const plan = await planRestore(checkpointId, destination);
+
+      if (plan.missingCheckpoint) {
+        toast.warning("No workspace checkpoint is available for this point.");
+        return { ok: true, shouldRestore: false, plan };
+      }
+
+      if (plan.changes.length === 0) {
+        return { ok: true, shouldRestore: false, plan };
+      }
+
+      const confirmed = await requestRestoreConfirmation(plan.changes);
+      if (!confirmed) {
+        return { ok: false, shouldRestore: false, plan };
+      }
+
+      return { ok: true, shouldRestore: true, plan };
+    },
+    [planRestore, requestRestoreConfirmation]
+  );
+
+  const restoreCurrentWorkspace = useCallback(
+    async (checkpointId: string) => {
+      const restore = await confirmRestorePlan(checkpointId);
+
+      if (!restore.ok) {
+        return false;
+      }
+
+      if (!restore.shouldRestore) {
+        return true;
+      }
+
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/workspace/restore`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            chatId,
+            checkpointId,
+            confirmed: true,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        throw new Error(error?.cause || error?.message || "Restore failed");
+      }
+
+      return true;
+    },
+    [chatId, confirmRestorePlan]
+  );
+
+  const sendMessage: SendMessage = useCallback(
+    async (message, options) => {
+      if (!selectedProjectId) {
+        toast.error("Select a project before sending a message.");
+        return false;
+      }
+
+      const pendingEditOptions = pendingEditRef.current
+        ? {
+            branchFromEntryId: pendingEditRef.current.branchFromEntryId,
+            replaceFromMessageId: pendingEditRef.current.messageId,
+            restoreCheckpointId: pendingEditRef.current.checkpointId,
+          }
+        : undefined;
+      const editOptions =
+        pendingEditOptions || options
+          ? { ...pendingEditOptions, ...options }
+          : undefined;
+
+      try {
+        if (editOptions?.restoreCheckpointId) {
+          const restored = await restoreCurrentWorkspace(
+            editOptions.restoreCheckpointId
+          );
+          if (!restored) {
+            return false;
+          }
+        }
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Failed to restore workspace."
+        );
+        return false;
+      }
+
+      const userMessageId = message.id ?? generateUUID();
       const userMessage: ChatMessage = {
-        id: message.id ?? generateUUID(),
+        id: userMessageId,
         role: "user",
         parts: message.parts,
-        metadata: { createdAt: new Date().toISOString() },
+        metadata: {
+          checkpointId: userMessageId,
+          createdAt: new Date().toISOString(),
+          parentId: editOptions?.branchFromEntryId ?? undefined,
+        },
       };
       const assistantMessage: ChatMessage = {
         id: generateUUID(),
@@ -307,7 +501,23 @@ export function usePiChat() {
         metadata: { createdAt: new Date().toISOString() },
       };
 
-      setMessagesState((current) => [...current, userMessage]);
+      setPendingEdit(null);
+      editOptions?.onAccepted?.();
+      setMessagesState((current) => {
+        if (!editOptions?.replaceFromMessageId) {
+          return [...current, userMessage];
+        }
+
+        const replaceIndex = current.findIndex(
+          (candidate) => candidate.id === editOptions.replaceFromMessageId
+        );
+
+        if (replaceIndex < 0) {
+          return [...current, userMessage];
+        }
+
+        return [...current.slice(0, replaceIndex), userMessage];
+      });
       setStatus("submitted");
 
       const abortController = new AbortController();
@@ -323,6 +533,7 @@ export function usePiChat() {
               projectId: selectedProjectId,
               message: userMessage,
               selectedChatModel: currentModelId,
+              branchFromEntryId: editOptions?.branchFromEntryId,
             }),
             signal: abortController.signal,
           }
@@ -347,6 +558,11 @@ export function usePiChat() {
             continue;
           }
 
+          if (event.type === "done" && event.messages) {
+            setMessagesState(event.messages);
+            continue;
+          }
+
           if (event.type === "tool-end" && event.displayIntent) {
             setLatestWorkspaceDisplayIntent(event.displayIntent);
           }
@@ -366,6 +582,7 @@ export function usePiChat() {
         // reflects the saved turn instead of the empty snapshot fetched when
         // the chat was first created.
         mutate(messagesKey);
+        return true;
       } catch (error) {
         if ((error as DOMException).name === "AbortError") {
           setStatus("ready");
@@ -375,6 +592,7 @@ export function usePiChat() {
           );
           setStatus("error");
         }
+        return true;
       } finally {
         abortControllerRef.current = null;
       }
@@ -385,6 +603,7 @@ export function usePiChat() {
       messagesKey,
       mutate,
       refreshHistory,
+      restoreCurrentWorkspace,
       selectedProjectId,
     ]
   );
@@ -402,12 +621,150 @@ export function usePiChat() {
     setStatus("ready");
   }, []);
 
+  const startEditMessage = useCallback(
+    (messageId: string) => {
+      const message = messages.find((candidate) => candidate.id === messageId);
+      if (message?.role !== "user") {
+        return;
+      }
+
+      const originalText = textFromMessage(message);
+      if (!originalText) {
+        return;
+      }
+
+      setPendingEdit({
+        branchFromEntryId: message.metadata?.parentId ?? null,
+        checkpointId: checkpointBefore(message),
+        messageId: message.id,
+        originalText,
+      });
+      setInput(originalText);
+    },
+    [messages]
+  );
+
+  const cancelEditMessage = useCallback(() => {
+    setPendingEdit(null);
+    setInput("");
+  }, []);
+
+  const regenerateMessage = useCallback(
+    async (messageId: string) => {
+      const assistantIndex = messages.findIndex(
+        (candidate) => candidate.id === messageId
+      );
+      if (assistantIndex < 0) {
+        return;
+      }
+
+      const userMessage = [...messages]
+        .slice(0, assistantIndex)
+        .reverse()
+        .find((candidate) => candidate.role === "user");
+      if (!userMessage) {
+        toast.error("No user message found to regenerate from.");
+        return;
+      }
+
+      const parts = replayableUserParts(userMessage);
+      if (parts.length === 0) {
+        toast.error("No user text found to regenerate from.");
+        return;
+      }
+
+      await sendMessage(
+        {
+          role: "user",
+          parts,
+        },
+        {
+          branchFromEntryId: userMessage.metadata?.parentId ?? null,
+          replaceFromMessageId: userMessage.id,
+          restoreCheckpointId: checkpointBefore(userMessage),
+        }
+      );
+    },
+    [messages, sendMessage]
+  );
+
+  const branchMessage = useCallback(
+    async (messageId: string) => {
+      const message = messages.find((candidate) => candidate.id === messageId);
+      if (!message) {
+        return;
+      }
+
+      const checkpointId =
+        message.role === "user"
+          ? checkpointBefore(message)
+          : (message.metadata?.checkpointId ?? message.id);
+      const entryId =
+        message.role === "assistant"
+          ? (message.metadata?.checkpointId ?? message.id)
+          : message.id;
+
+      try {
+        const restore = await confirmRestorePlan(checkpointId, "new-chat");
+        if (!restore.ok) {
+          return;
+        }
+
+        const response = await fetch(
+          `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/chat/branch`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              chatId,
+              entryId,
+              restoreCheckpointId: restore.shouldRestore
+                ? checkpointId
+                : undefined,
+              confirmedRestore: restore.shouldRestore,
+            }),
+          }
+        );
+
+        if (!response.ok) {
+          const error = await response.json().catch(() => null);
+          throw new Error(error?.cause || error?.message || "Branch failed");
+        }
+
+        const result = (await response.json()) as {
+          chatId: string;
+          url: string;
+        };
+        refreshHistory();
+        router.push(result.url);
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Failed to branch conversation."
+        );
+      }
+    },
+    [chatId, confirmRestorePlan, messages, refreshHistory, router]
+  );
+
   return useMemo(
     () => ({
       chatId,
       messages,
       setMessages,
       sendMessage,
+      startEditMessage,
+      cancelEditMessage,
+      regenerateMessage,
+      branchMessage,
+      editingMessage: pendingEdit,
+      restoreConfirmation: restoreConfirmationChanges
+        ? {
+            changes: restoreConfirmationChanges,
+            onCancel: () => resolveRestoreConfirmation(false),
+            onConfirm: () => resolveRestoreConfirmation(true),
+          }
+        : null,
       status,
       stop,
       input,
@@ -423,6 +780,13 @@ export function usePiChat() {
       messages,
       setMessages,
       sendMessage,
+      startEditMessage,
+      cancelEditMessage,
+      regenerateMessage,
+      branchMessage,
+      pendingEdit,
+      restoreConfirmationChanges,
+      resolveRestoreConfirmation,
       status,
       stop,
       input,

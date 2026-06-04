@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { SessionManager } from "@mariozechner/pi-coding-agent";
 import { ipAddress } from "@vercel/functions";
 import { auth } from "@/app/(auth)/auth";
 import { allowedModelIds, DEFAULT_CHAT_MODEL } from "@/lib/ai/models";
@@ -17,6 +18,7 @@ import {
 import type { Chat } from "@/lib/db/schema";
 import { ChatbotError } from "@/lib/errors";
 import type { PiStreamEvent } from "@/lib/pi/events";
+import { piEntriesToChatMessages } from "@/lib/pi/jsonl";
 import { createPiSdkSession } from "@/lib/pi/session";
 import {
   ensureConversationWorkspace,
@@ -25,6 +27,10 @@ import {
   getProjectWorkspacePath,
   moveWorkspaceToTrash,
 } from "@/lib/pi/workspace";
+import {
+  createWorkspaceCheckpoint,
+  ROOT_WORKSPACE_CHECKPOINT_ID,
+} from "@/lib/pi/workspace-checkpoints";
 import {
   diffWorkspaceSnapshots,
   displayIntentFromToolResult,
@@ -232,16 +238,38 @@ function createConversationMetadata({
   });
 }
 
+function applyRequestedBranch(
+  sessionManager: SessionManager,
+  branchFromEntryId: string | null | undefined
+) {
+  if (branchFromEntryId === undefined) {
+    return;
+  }
+
+  if (branchFromEntryId === null) {
+    sessionManager.resetLeaf();
+    return;
+  }
+
+  sessionManager.branch(branchFromEntryId);
+}
+
+function currentCheckpointId(sessionManager: SessionManager) {
+  return sessionManager.getLeafId() ?? ROOT_WORKSPACE_CHECKPOINT_ID;
+}
+
 async function runMockPiTurn({
   chat,
   message,
   title,
+  branchFromEntryId,
   controller,
   encoder,
 }: {
   chat: Chat;
   message: PostRequestBody["message"];
   title: string | null;
+  branchFromEntryId?: string | null;
   controller: ReadableStreamDefaultController<Uint8Array>;
   encoder: TextEncoder;
 }) {
@@ -286,74 +314,55 @@ async function runMockPiTurn({
     : [readToolCall, showcaseToolCall, { type: "text", text }];
 
   await mkdir(path.dirname(sessionFilePath), { recursive: true });
-  await writeFile(
+  const sessionManager = SessionManager.open(
     sessionFilePath,
-    `${[
-      JSON.stringify({
-        type: "session",
-        version: 3,
-        id: chat.id,
-        timestamp,
-        cwd: chat.workspacePath,
-      }),
-      JSON.stringify({
-        type: "message",
-        id: message.id,
-        parentId: null,
-        timestamp,
-        message: { role: "user", content: userText, timestamp: Date.now() },
-      }),
-      JSON.stringify({
-        type: "message",
-        id: generateUUID(),
-        parentId: message.id,
-        timestamp,
-        message: {
-          role: "assistant",
-          content: assistantContent,
-          timestamp: Date.now(),
-        },
-      }),
-      JSON.stringify({
-        type: "message",
-        id: generateUUID(),
-        parentId: message.id,
-        timestamp,
-        message: {
-          role: "toolResult",
-          toolCallId: "mock-tool",
-          toolName: "read",
-          content: "mock tool output",
-          isError: false,
-          timestamp: Date.now(),
-        },
-      }),
-      ...(shouldMockInterleavedThinking
-        ? []
-        : [
-            JSON.stringify({
-              type: "message",
-              id: generateUUID(),
-              parentId: message.id,
-              timestamp,
-              message: {
-                role: "toolResult",
-                toolCallId: "mock-showcase-file",
-                toolName: "showcase_file",
-                content:
-                  "Opened conversation:mock-output.md in the preview pane.",
-                details: { displayIntent },
-                isError: false,
-                timestamp: Date.now(),
-              },
-            }),
-          ]),
-    ].join("\n")}\n`
+    undefined,
+    chat.workspacePath
   );
+  applyRequestedBranch(sessionManager, branchFromEntryId);
+  const beforeCheckpointId = currentCheckpointId(sessionManager);
+  const roots = getWorkspaceRoots(chat);
+
+  await createWorkspaceCheckpoint({
+    roots,
+    conversationPath: chat.workspacePath,
+    checkpointId: beforeCheckpointId,
+  });
+
+  sessionManager.appendMessage({
+    role: "user",
+    content: userText,
+    timestamp: Date.now(),
+  });
+  sessionManager.appendMessage({
+    role: "assistant",
+    content: assistantContent,
+    timestamp: Date.now(),
+  } as never);
+  sessionManager.appendMessage({
+    role: "toolResult",
+    toolCallId: "mock-tool",
+    toolName: "read",
+    content: "mock tool output",
+    isError: false,
+    timestamp: Date.now(),
+  } as never);
+
+  if (!shouldMockInterleavedThinking) {
+    sessionManager.appendMessage({
+      role: "toolResult",
+      toolCallId: "mock-showcase-file",
+      toolName: "showcase_file",
+      content: "Opened conversation:mock-output.md in the preview pane.",
+      details: { displayIntent },
+      isError: false,
+      timestamp: Date.now(),
+    } as never);
+  }
 
   const mockMarkdownPath = path.join(chat.workspacePath, "mock-output.md");
   const mockAppPath = path.join(chat.workspacePath, "apps", "mock");
-  const mockSharedPath = getWorkspaceRoots(chat).sharedPath;
+  const mockSharedPath = roots.sharedPath;
   await mkdir(mockAppPath, { recursive: true });
   await mkdir(mockSharedPath, { recursive: true });
   await writeFile(
@@ -422,8 +431,19 @@ async function runMockPiTurn({
       intent: displayIntent,
     });
   }
+  const afterCheckpointId = currentCheckpointId(sessionManager);
+  await createWorkspaceCheckpoint({
+    roots,
+    conversationPath: chat.workspacePath,
+    checkpointId: afterCheckpointId,
+  });
+
   writeNdjson(controller, encoder, { type: "text-delta", delta: text });
-  writeNdjson(controller, encoder, { type: "done", sessionFilePath });
+  writeNdjson(controller, encoder, {
+    type: "done",
+    sessionFilePath,
+    messages: piEntriesToChatMessages(sessionManager.getBranch(), chat.id),
+  });
 }
 
 export async function POST(request: Request) {
@@ -542,6 +562,7 @@ export async function POST(request: Request) {
               chat,
               message: requestBody.message,
               title,
+              branchFromEntryId: requestBody.branchFromEntryId,
               controller,
               encoder,
             });
@@ -556,6 +577,17 @@ export async function POST(request: Request) {
             chatId: chat.id,
             sessionFilePath: chat.piSessionFilePath,
             selectedModelId: selectedChatModel,
+          });
+
+          applyRequestedBranch(
+            piSession.sessionManager,
+            requestBody.branchFromEntryId
+          );
+
+          await createWorkspaceCheckpoint({
+            roots: workspaceRoots,
+            conversationPath: chat.workspacePath,
+            checkpointId: currentCheckpointId(piSession.sessionManager),
           });
 
           if (
@@ -714,11 +746,21 @@ export async function POST(request: Request) {
             await buildPiUserContent(requestBody.message)
           );
 
+          await createWorkspaceCheckpoint({
+            roots: workspaceRoots,
+            conversationPath: chat.workspacePath,
+            checkpointId: currentCheckpointId(piSession.sessionManager),
+          });
+
           await persistWorkspaceChanges();
 
           writeNdjson(controller, encoder, {
             type: "done",
             sessionFilePath: piSession.sessionFile,
+            messages: piEntriesToChatMessages(
+              piSession.sessionManager.getBranch(),
+              chat.id
+            ),
           });
           controller.close();
         } catch (error) {

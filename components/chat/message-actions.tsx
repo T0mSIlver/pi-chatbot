@@ -1,6 +1,8 @@
+import { GitBranchIcon, PencilIcon, RefreshCwIcon } from "lucide-react";
 import { memo } from "react";
 import { toast } from "sonner";
 import { useCopyToClipboard } from "usehooks-ts";
+import { useActiveChat } from "@/hooks/use-active-chat";
 import type { ChatMessage } from "@/lib/types";
 import {
   MessageAction as Action,
@@ -17,6 +19,8 @@ export function PureMessageActions({
   isLoading: boolean;
 }) {
   const [_, copyToClipboard] = useCopyToClipboard();
+  const { startEditMessage, regenerateMessage, branchMessage } =
+    useActiveChat();
 
   const textFromParts = message.parts
     ?.filter((part) => part.type === "text")
@@ -24,7 +28,7 @@ export function PureMessageActions({
     .join("\n")
     .trim();
 
-  if (isLoading || !textFromParts) {
+  if (isLoading) {
     return null;
   }
 
@@ -35,13 +39,42 @@ export function PureMessageActions({
 
   return (
     <Actions className="-ml-0.5 opacity-0 transition-opacity duration-150 group-hover/message:opacity-100">
-      <Action
-        className="text-muted-foreground/50 hover:text-foreground"
-        onClick={handleCopy}
-        tooltip="Copy"
-      >
-        <CopyIcon />
-      </Action>
+      {textFromParts && (
+        <Action
+          className="text-muted-foreground/50 hover:text-foreground"
+          onClick={handleCopy}
+          tooltip="Copy"
+        >
+          <CopyIcon />
+        </Action>
+      )}
+      {message.role === "user" && textFromParts && (
+        <Action
+          className="text-muted-foreground/50 hover:text-foreground"
+          onClick={() => startEditMessage(message.id)}
+          tooltip="Edit"
+        >
+          <PencilIcon className="size-3.5" />
+        </Action>
+      )}
+      {message.role === "assistant" && (
+        <Action
+          className="text-muted-foreground/50 hover:text-foreground"
+          onClick={() => regenerateMessage(message.id)}
+          tooltip="Regenerate"
+        >
+          <RefreshCwIcon className="size-3.5" />
+        </Action>
+      )}
+      {(message.role === "user" || message.role === "assistant") && (
+        <Action
+          className="text-muted-foreground/50 hover:text-foreground"
+          onClick={() => branchMessage(message.id)}
+          tooltip="Branch"
+        >
+          <GitBranchIcon className="size-3.5" />
+        </Action>
+      )}
     </Actions>
   );
 }

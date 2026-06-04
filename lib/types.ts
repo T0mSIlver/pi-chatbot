@@ -4,6 +4,8 @@ import type { Suggestion } from "@/lib/db/schema";
 
 export const messageMetadataSchema = z.object({
   createdAt: z.string(),
+  parentId: z.string().nullable().optional(),
+  checkpointId: z.string().optional(),
 });
 
 export type MessageMetadata = z.infer<typeof messageMetadataSchema>;
@@ -102,11 +104,19 @@ export type ChatMessage = {
   metadata?: MessageMetadata;
 };
 
-export type SendMessage = (message: {
-  id?: string;
-  role: "user";
-  parts: ChatMessagePart[];
-}) => Promise<void>;
+export type SendMessage = (
+  message: {
+    id?: string;
+    role: "user";
+    parts: ChatMessagePart[];
+  },
+  options?: {
+    branchFromEntryId?: string | null;
+    onAccepted?: () => void;
+    replaceFromMessageId?: string;
+    restoreCheckpointId?: string;
+  }
+) => Promise<boolean>;
 
 export type SetMessages = (
   messages: ChatMessage[] | ((messages: ChatMessage[]) => ChatMessage[])

@@ -7,6 +7,7 @@ import {
   EyeIcon,
   LockIcon,
   WrenchIcon,
+  XIcon,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
@@ -86,6 +87,8 @@ function PureMultimodalInput({
   selectedModelId,
   onModelChange,
   isLoading,
+  editingMessage,
+  onCancelEdit,
 }: {
   chatId: string;
   input: string;
@@ -101,6 +104,8 @@ function PureMultimodalInput({
   selectedModelId: string;
   onModelChange?: (modelId: string) => void;
   isLoading?: boolean;
+  editingMessage?: { messageId: string; originalText: string } | null;
+  onCancelEdit?: () => void;
 }) {
   const router = useRouter();
   const { setTheme, resolvedTheme } = useTheme();
@@ -210,36 +215,41 @@ function PureMultimodalInput({
   const [slashQuery, setSlashQuery] = useState("");
   const [slashIndex, setSlashIndex] = useState(0);
 
-  const submitForm = useCallback(() => {
-    window.history.pushState(
-      {},
-      "",
-      `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/chat/${chatId}`
-    );
+  const submitForm = useCallback(async () => {
+    await sendMessage(
+      {
+        role: "user",
+        parts: [
+          ...attachments.map((attachment) => ({
+            type: "file" as const,
+            url: attachment.url,
+            name: attachment.name,
+            mediaType: attachment.contentType,
+          })),
+          {
+            type: "text",
+            text: input,
+          },
+        ],
+      },
+      {
+        onAccepted: () => {
+          window.history.pushState(
+            {},
+            "",
+            `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/chat/${chatId}`
+          );
 
-    sendMessage({
-      role: "user",
-      parts: [
-        ...attachments.map((attachment) => ({
-          type: "file" as const,
-          url: attachment.url,
-          name: attachment.name,
-          mediaType: attachment.contentType,
-        })),
-        {
-          type: "text",
-          text: input,
+          setAttachments([]);
+          setLocalStorageInput("");
+          setInput("");
+
+          if (width && width > 768) {
+            textareaRef.current?.focus();
+          }
         },
-      ],
-    });
-
-    setAttachments([]);
-    setLocalStorageInput("");
-    setInput("");
-
-    if (width && width > 768) {
-      textareaRef.current?.focus();
-    }
+      }
+    );
   }, [
     input,
     setInput,
@@ -395,7 +405,7 @@ function PureMultimodalInput({
 
       <PromptInput
         className="[&>div]:rounded-2xl [&>div]:border [&>div]:border-border/30 [&>div]:bg-card/70 [&>div]:shadow-[var(--shadow-composer)] [&>div]:transition-shadow [&>div]:duration-300 [&>div]:focus-within:shadow-[var(--shadow-composer-focus)]"
-        onSubmit={() => {
+        onSubmit={async () => {
           if (input.startsWith("/")) {
             const query = input.slice(1).trim();
             const cmd = slashCommands.find((c) => c.name === query);
@@ -408,12 +418,32 @@ function PureMultimodalInput({
             return;
           }
           if (status === "ready" || status === "error") {
-            submitForm();
+            await submitForm();
           } else {
             toast.error("Please wait for the model to finish its response!");
           }
         }}
       >
+        {editingMessage && (
+          <div
+            className="flex items-center gap-2 border-border/30 border-b px-3 py-2 text-muted-foreground text-xs"
+            data-testid="editing-message-banner"
+          >
+            <span className="min-w-0 flex-1 truncate">Editing message</span>
+            <Button
+              className="h-6 w-6 rounded-md p-1"
+              onClick={(event) => {
+                event.preventDefault();
+                onCancelEdit?.();
+              }}
+              type="button"
+              variant="ghost"
+            >
+              <XIcon className="size-3.5" />
+              <span className="sr-only">Cancel edit</span>
+            </Button>
+          </div>
+        )}
         {(attachments.length > 0 || uploadQueue.length > 0) && (
           <div
             className="flex w-full self-start flex-row gap-2 overflow-x-auto px-3 pt-3 no-scrollbar"
@@ -540,6 +570,12 @@ export const MultimodalInput = memo(
       return false;
     }
     if (prevProps.isLoading !== nextProps.isLoading) {
+      return false;
+    }
+    if (
+      prevProps.editingMessage?.messageId !==
+      nextProps.editingMessage?.messageId
+    ) {
       return false;
     }
     if (prevProps.messages.length !== nextProps.messages.length) {

@@ -25,6 +25,7 @@ export const postRequestBodySchema = z.object({
   projectId: z.string().uuid().optional(),
   message: userMessageSchema,
   selectedChatModel: z.string(),
+  branchFromEntryId: z.string().min(1).nullable().optional(),
 });
 
 export type PostRequestBody = z.infer<typeof postRequestBodySchema>;

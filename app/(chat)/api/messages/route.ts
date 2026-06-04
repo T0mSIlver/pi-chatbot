@@ -27,7 +27,11 @@ export async function GET(request: Request) {
     return Response.json({ error: "forbidden" }, { status: 403 });
   }
 
-  const messages = await readPiSessionMessages(chat.piSessionFilePath, chat.id);
+  const messages = await readPiSessionMessages(
+    chat.piSessionFilePath,
+    chat.id,
+    chat.workspacePath
+  );
 
   return Response.json({
     messages,

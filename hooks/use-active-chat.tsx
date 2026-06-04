@@ -12,6 +12,7 @@ import type {
   ChatStatus,
   SendMessage,
   SetMessages,
+  WorkspaceChange,
   WorkspaceDisplayIntent,
 } from "@/lib/types";
 import { usePiChat } from "./use-pi-chat";
@@ -21,6 +22,19 @@ type ActiveChatContextValue = {
   messages: ChatMessage[];
   setMessages: SetMessages;
   sendMessage: SendMessage;
+  startEditMessage: (messageId: string) => void;
+  cancelEditMessage: () => void;
+  regenerateMessage: (messageId: string) => Promise<void>;
+  branchMessage: (messageId: string) => Promise<void>;
+  editingMessage: {
+    messageId: string;
+    originalText: string;
+  } | null;
+  restoreConfirmation: {
+    changes: WorkspaceChange[];
+    onCancel: () => void;
+    onConfirm: () => void;
+  } | null;
   status: ChatStatus;
   stop: () => void;
   input: string;

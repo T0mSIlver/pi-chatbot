@@ -1,9 +1,11 @@
 import "server-only";
 
 import { readFile } from "node:fs/promises";
+import { SessionManager } from "@mariozechner/pi-coding-agent";
 import { formatISO } from "date-fns";
 import type { ChatMessage, ChatMessagePart, PiToolUIPart } from "@/lib/types";
 import { generateUUID } from "@/lib/utils";
+import { ROOT_WORKSPACE_CHECKPOINT_ID } from "./workspace-checkpoints";
 import {
   displayIntentFromShowcaseToolInput,
   displayIntentFromToolResult,
@@ -12,6 +14,7 @@ import {
 type SessionMessageEntry = {
   type: "message";
   id: string;
+  parentId?: string | null;
   timestamp: string;
   message: {
     role: string;
@@ -90,7 +93,11 @@ function getOrCreateAssistantForTool(
     id: entry.id || generateUUID(),
     role: "assistant",
     parts: [],
-    metadata: { createdAt: createdAt(entry.timestamp) },
+    metadata: {
+      checkpointId: entry.id || ROOT_WORKSPACE_CHECKPOINT_ID,
+      createdAt: createdAt(entry.timestamp),
+      parentId: entry.parentId ?? null,
+    },
   };
   messages.push(assistant);
   return assistant;
@@ -108,7 +115,11 @@ function convertEntry(
       id: entry.id || generateUUID(),
       role: "user",
       parts: [{ type: "text", text: contentToText(message.content) }],
-      metadata: { createdAt: createdAt(entry.timestamp) },
+      metadata: {
+        checkpointId: entry.id || ROOT_WORKSPACE_CHECKPOINT_ID,
+        createdAt: createdAt(entry.timestamp),
+        parentId: entry.parentId ?? null,
+      },
     });
     return;
   }
@@ -179,7 +190,11 @@ function convertEntry(
         id: entry.id || generateUUID(),
         role: "assistant",
         parts,
-        metadata: { createdAt: createdAt(entry.timestamp) },
+        metadata: {
+          checkpointId: entry.id || ROOT_WORKSPACE_CHECKPOINT_ID,
+          createdAt: createdAt(entry.timestamp),
+          parentId: entry.parentId ?? null,
+        },
       });
     }
     return;
@@ -218,6 +233,16 @@ function convertEntry(
     toolPart.displayIntent = displayIntent ?? undefined;
     toolPart.errorText = message.isError ? text || "Tool failed" : undefined;
     toolPart.isError = message.isError;
+    const assistant = messages.find((candidate) =>
+      candidate.parts.includes(toolPart)
+    );
+    if (assistant) {
+      assistant.metadata = {
+        ...assistant.metadata,
+        checkpointId: entry.id || assistant.metadata?.checkpointId,
+        createdAt: assistant.metadata?.createdAt ?? createdAt(entry.timestamp),
+      };
+    }
   }
 }
 
@@ -238,28 +263,38 @@ export function piEntriesToChatMessages(
 
 export async function readPiSessionMessages(
   sessionFilePath: string | null,
-  chatId?: string | null
+  chatId?: string | null,
+  workspacePath?: string | null
 ) {
   if (!sessionFilePath) {
     return [];
   }
 
   try {
-    const content = await readFile(sessionFilePath, "utf8");
-    const entries = content
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => {
-        try {
-          return JSON.parse(line);
-        } catch {
-          return null;
-        }
-      })
-      .filter(Boolean);
-
-    return piEntriesToChatMessages(entries, chatId);
+    const sessionManager = SessionManager.open(
+      sessionFilePath,
+      undefined,
+      workspacePath ?? undefined
+    );
+    return piEntriesToChatMessages(sessionManager.getBranch(), chatId);
   } catch {
-    return [];
+    try {
+      const content = await readFile(sessionFilePath, "utf8");
+      const entries = content
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => {
+          try {
+            return JSON.parse(line);
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean);
+
+      return piEntriesToChatMessages(entries, chatId);
+    } catch {
+      return [];
+    }
   }
 }
