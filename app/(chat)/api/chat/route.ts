@@ -16,8 +16,8 @@ import {
 } from "@/lib/db/queries";
 import type { Chat } from "@/lib/db/schema";
 import { ChatbotError } from "@/lib/errors";
+import { type ChatRun, startChatRun } from "@/lib/pi/chat-runs";
 import { generateConversationMetadata } from "@/lib/pi/conversation-metadata";
-import type { PiStreamEvent } from "@/lib/pi/events";
 import { piEntriesToChatMessages } from "@/lib/pi/jsonl";
 import { createPiSdkSession } from "@/lib/pi/session";
 import {
@@ -38,26 +38,11 @@ import {
   writeWorkspaceChanges,
 } from "@/lib/pi/workspace-files";
 import { checkIpRateLimit } from "@/lib/ratelimit";
-import { getTextFromMessage } from "@/lib/utils";
+import type { ChatMessage } from "@/lib/types";
+import { generateUUID, getTextFromMessage } from "@/lib/utils";
 import { type PostRequestBody, postRequestBodySchema } from "./schema";
 
 export const maxDuration = 300;
-
-declare global {
-  // eslint-disable-next-line no-var
-  var __piConversationLocks: Set<string> | undefined;
-}
-
-const locks = globalThis.__piConversationLocks ?? new Set<string>();
-globalThis.__piConversationLocks = locks;
-
-function writeNdjson(
-  controller: ReadableStreamDefaultController<Uint8Array>,
-  encoder: TextEncoder,
-  event: PiStreamEvent
-) {
-  controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
-}
 
 function contentToText(content: unknown) {
   if (typeof content === "string") {
@@ -112,6 +97,37 @@ function createInitialConversationTitle(message: PostRequestBody["message"]) {
     .trim();
 
   return title.length > 60 ? `${title.slice(0, 57).trim()}...` : title;
+}
+
+function createSubmittedMessages({
+  assistantMessageId,
+  branchFromEntryId,
+  existingMessages,
+  message,
+}: {
+  assistantMessageId: string;
+  branchFromEntryId?: string | null;
+  existingMessages: ChatMessage[];
+  message: PostRequestBody["message"];
+}) {
+  const userMessage: ChatMessage = {
+    id: message.id,
+    role: "user",
+    parts: message.parts,
+    metadata: {
+      checkpointId: message.id,
+      createdAt: new Date().toISOString(),
+      parentId: branchFromEntryId ?? undefined,
+    },
+  };
+  const assistantMessage: ChatMessage = {
+    id: assistantMessageId,
+    role: "assistant",
+    parts: [],
+    metadata: { createdAt: new Date().toISOString() },
+  };
+
+  return [...existingMessages, userMessage, assistantMessage];
 }
 
 type StreamingToolCall = {
@@ -215,6 +231,27 @@ async function buildPiUserContent(message: PostRequestBody["message"]) {
   return [{ type: "text" as const, text }, ...images];
 }
 
+function waitForMockDelay(signal: AbortSignal) {
+  return new Promise<void>((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+
+    let timeout: ReturnType<typeof setTimeout>;
+    const stopWaiting = () => {
+      clearTimeout(timeout);
+      resolve();
+    };
+    timeout = setTimeout(() => {
+      signal.removeEventListener("abort", stopWaiting);
+      resolve();
+    }, 3000);
+
+    signal.addEventListener("abort", stopWaiting, { once: true });
+  });
+}
+
 function createConversationMetadata({
   id,
   userId,
@@ -263,22 +300,23 @@ function currentCheckpointId(sessionManager: SessionManager) {
 }
 
 async function runMockPiTurn({
+  assistantMessageId,
   chat,
   message,
   branchFromEntryId,
-  controller,
-  encoder,
+  run,
 }: {
+  assistantMessageId: string;
   chat: Chat;
   message: PostRequestBody["message"];
   branchFromEntryId?: string | null;
-  controller: ReadableStreamDefaultController<Uint8Array>;
-  encoder: TextEncoder;
+  run: ChatRun;
 }) {
   const sessionFilePath = chat.piSessionFilePath;
   const timestamp = new Date().toISOString();
   const text = "This is a mocked Pi response for tests.";
   const userText = getTextFromMessage(message);
+  const shouldDelay = /slow background/i.test(userText);
   const shouldMockInterleavedThinking = /interleaved thinking/i.test(userText);
   const displayIntent = {
     type: "workspace-file" as const,
@@ -324,6 +362,27 @@ async function runMockPiTurn({
   applyRequestedBranch(sessionManager, branchFromEntryId);
   const beforeCheckpointId = currentCheckpointId(sessionManager);
   const roots = getWorkspaceRoots(chat);
+
+  run.emit({
+    type: "snapshot",
+    messages: createSubmittedMessages({
+      assistantMessageId,
+      branchFromEntryId,
+      existingMessages: piEntriesToChatMessages(
+        sessionManager.getBranch(),
+        chat.id
+      ),
+      message,
+    }),
+    status: "streaming",
+  });
+
+  if (shouldDelay) {
+    await waitForMockDelay(run.abortSignal);
+    if (run.abortSignal.aborted) {
+      return sessionManager.getBranch();
+    }
+  }
 
   await createWorkspaceCheckpoint({
     roots,
@@ -387,18 +446,18 @@ async function runMockPiTurn({
   );
 
   if (shouldMockInterleavedThinking) {
-    writeNdjson(controller, encoder, {
+    run.emit({
       type: "thinking-delta",
       delta: "I should inspect the README first.",
     });
   }
-  writeNdjson(controller, encoder, {
+  run.emit({
     type: "tool-start",
     toolCallId: "mock-tool",
     toolName: "read",
     input: { path: "README.md" },
   });
-  writeNdjson(controller, encoder, {
+  run.emit({
     type: "tool-end",
     toolCallId: "mock-tool",
     toolName: "read",
@@ -406,18 +465,18 @@ async function runMockPiTurn({
     isError: false,
   });
   if (shouldMockInterleavedThinking) {
-    writeNdjson(controller, encoder, {
+    run.emit({
       type: "thinking-delta",
       delta: "The README result is enough context.",
     });
   } else {
-    writeNdjson(controller, encoder, {
+    run.emit({
       type: "tool-start",
       toolCallId: "mock-showcase-file",
       toolName: "showcase_file",
       input: { path: "mock-output.md", mode: "markdown" },
     });
-    writeNdjson(controller, encoder, {
+    run.emit({
       type: "tool-end",
       toolCallId: "mock-showcase-file",
       toolName: "showcase_file",
@@ -425,7 +484,7 @@ async function runMockPiTurn({
       displayIntent,
       isError: false,
     });
-    writeNdjson(controller, encoder, {
+    run.emit({
       type: "workspace-display",
       intent: displayIntent,
     });
@@ -437,14 +496,360 @@ async function runMockPiTurn({
     checkpointId: afterCheckpointId,
   });
 
-  writeNdjson(controller, encoder, { type: "text-delta", delta: text });
-  writeNdjson(controller, encoder, {
+  run.emit({ type: "text-delta", delta: text });
+  run.emit({
     type: "done",
     sessionFilePath,
     messages: piEntriesToChatMessages(sessionManager.getBranch(), chat.id),
   });
 
   return sessionManager.getBranch();
+}
+
+async function producePiChatRun({
+  assistantMessageId,
+  requestBody,
+  run,
+  selectedChatModel,
+}: {
+  assistantMessageId: string;
+  requestBody: PostRequestBody;
+  run: ChatRun;
+  selectedChatModel: string;
+}) {
+  let chat = await getChatById({ id: requestBody.id });
+  let shouldGenerateMetadata = false;
+  const initialTitle = createInitialConversationTitle(requestBody.message);
+
+  if (!chat) {
+    const project = await getOrCreateProject(requestBody.projectId);
+    const workspace = await ensureConversationWorkspace({
+      userId: project.userId,
+      projectId: project.id,
+      conversationId: requestBody.id,
+    });
+
+    shouldGenerateMetadata = true;
+
+    if (isTestEnvironment) {
+      chat = await createConversationMetadata({
+        id: requestBody.id,
+        userId: project.userId,
+        projectId: project.id,
+        title: initialTitle,
+        piSessionFilePath: path.join(
+          workspace.conversationPath,
+          "pi-session.jsonl"
+        ),
+      });
+    } else {
+      const piSession = await createPiSdkSession({
+        workspacePath: workspace.conversationPath,
+        sharedPath: workspace.sharedPath,
+        chatId: requestBody.id,
+        selectedModelId: selectedChatModel,
+      });
+      chat = await createConversationMetadata({
+        id: requestBody.id,
+        userId: project.userId,
+        projectId: project.id,
+        title: initialTitle,
+        piSessionFilePath: piSession.sessionFile ?? "",
+      });
+      piSession.dispose();
+    }
+  }
+
+  if (!chat || run.abortSignal.aborted) {
+    return;
+  }
+
+  const workspaceRoots = getWorkspaceRoots(chat);
+  let piSession: Awaited<ReturnType<typeof createPiSdkSession>> | null = null;
+  let unsubscribe: (() => void) | null = null;
+  const abort = () => {
+    piSession?.abort().catch(() => undefined);
+  };
+
+  try {
+    if (shouldGenerateMetadata) {
+      run.emit({
+        type: "title",
+        title: chat.title,
+      });
+    }
+
+    const beforeSnapshot = await snapshotWorkspaceFiles(workspaceRoots);
+    const persistWorkspaceChanges = async () => {
+      const afterSnapshot = await snapshotWorkspaceFiles(workspaceRoots);
+      await writeWorkspaceChanges({
+        conversationPath: chat.workspacePath,
+        changes: diffWorkspaceSnapshots(beforeSnapshot, afterSnapshot),
+      });
+    };
+
+    if (isTestEnvironment) {
+      const entries = await runMockPiTurn({
+        assistantMessageId,
+        chat,
+        message: requestBody.message,
+        branchFromEntryId: requestBody.branchFromEntryId,
+        run,
+      });
+      await persistWorkspaceChanges();
+      if (shouldGenerateMetadata) {
+        const metadata = await generateConversationMetadata({
+          chatId: chat.id,
+          entries,
+          selectedModelId: selectedChatModel,
+          signal: run.abortSignal,
+        });
+        if (metadata) {
+          await updateChatMetadataById({
+            chatId: chat.id,
+            title: metadata.title,
+            summary: metadata.summary,
+          });
+          run.emit({
+            type: "title",
+            title: metadata.title,
+          });
+        }
+      }
+      return;
+    }
+
+    piSession = await createPiSdkSession({
+      workspacePath: chat.workspacePath,
+      sharedPath: workspaceRoots.sharedPath,
+      chatId: chat.id,
+      sessionFilePath: chat.piSessionFilePath,
+      selectedModelId: selectedChatModel,
+    });
+
+    applyRequestedBranch(
+      piSession.sessionManager,
+      requestBody.branchFromEntryId
+    );
+
+    run.emit({
+      type: "snapshot",
+      messages: createSubmittedMessages({
+        assistantMessageId,
+        branchFromEntryId: requestBody.branchFromEntryId,
+        existingMessages: piEntriesToChatMessages(
+          piSession.sessionManager.getBranch(),
+          chat.id
+        ),
+        message: requestBody.message,
+      }),
+      status: "streaming",
+    });
+
+    await createWorkspaceCheckpoint({
+      roots: workspaceRoots,
+      conversationPath: chat.workspacePath,
+      checkpointId: currentCheckpointId(piSession.sessionManager),
+    });
+
+    if (
+      piSession.sessionFile &&
+      piSession.sessionFile !== chat.piSessionFilePath
+    ) {
+      await updateChatPiSessionFilePathById({
+        chatId: chat.id,
+        piSessionFilePath: piSession.sessionFile,
+      });
+    }
+
+    run.abortSignal.addEventListener("abort", abort, { once: true });
+    if (run.abortSignal.aborted) {
+      abort();
+      return;
+    }
+
+    const streamingToolCalls = new Map<string, StreamingToolCall>();
+
+    unsubscribe = piSession.subscribe((event) => {
+      if (
+        event.type === "message_update" &&
+        event.assistantMessageEvent.type === "text_delta"
+      ) {
+        run.emit({
+          type: "text-delta",
+          delta: event.assistantMessageEvent.delta,
+        });
+      }
+
+      if (
+        event.type === "message_update" &&
+        event.assistantMessageEvent.type === "thinking_delta"
+      ) {
+        run.emit({
+          type: "thinking-delta",
+          delta: event.assistantMessageEvent.delta,
+        });
+      }
+
+      if (
+        event.type === "message_update" &&
+        event.assistantMessageEvent.type === "toolcall_start"
+      ) {
+        const block = getAssistantToolCallBlock(event.assistantMessageEvent);
+        if (block) {
+          const toolCallId = block.id ?? `tool-${block.contentIndex}`;
+          const toolName = block.name ?? "tool";
+          streamingToolCalls.set(String(block.contentIndex), {
+            toolCallId,
+            toolName,
+            inputText: "",
+          });
+          run.emit({
+            type: "tool-input-start",
+            toolCallId,
+            toolName,
+          });
+        }
+      }
+
+      if (
+        event.type === "message_update" &&
+        event.assistantMessageEvent.type === "toolcall_delta"
+      ) {
+        const block = getAssistantToolCallBlock(event.assistantMessageEvent);
+        if (block) {
+          const key = String(block.contentIndex);
+          const existing = streamingToolCalls.get(key);
+          const toolCallId =
+            existing?.toolCallId ?? block.id ?? `tool-${block.contentIndex}`;
+          const toolName = existing?.toolName ?? block.name ?? "tool";
+          const delta =
+            typeof event.assistantMessageEvent.delta === "string"
+              ? event.assistantMessageEvent.delta
+              : "";
+          const inputText = `${existing?.inputText ?? ""}${delta}`;
+          streamingToolCalls.set(key, {
+            toolCallId,
+            toolName,
+            inputText,
+          });
+          run.emit({
+            type: "tool-input-delta",
+            toolCallId,
+            toolName,
+            inputText,
+          });
+        }
+      }
+
+      if (
+        event.type === "message_update" &&
+        event.assistantMessageEvent.type === "toolcall_end"
+      ) {
+        const block = getAssistantToolCallBlock(event.assistantMessageEvent);
+        if (block) {
+          streamingToolCalls.delete(String(block.contentIndex));
+        }
+      }
+
+      if (event.type === "tool_execution_start") {
+        run.emit({
+          type: "tool-start",
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          input: event.args,
+        });
+      }
+
+      if (event.type === "tool_execution_update") {
+        run.emit({
+          type: "tool-update",
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          output: previewToolOutput(event.partialResult),
+        });
+      }
+
+      if (event.type === "tool_execution_end") {
+        const text = contentToText(event.result?.content);
+        const displayIntent = displayIntentFromToolResult(
+          event.result?.details
+        );
+        run.emit({
+          type: "tool-end",
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          output: displayIntent
+            ? text || "Opened in the preview pane."
+            : previewToolOutput(event.result?.details ?? text),
+          displayIntent: displayIntent ?? undefined,
+          errorText: event.isError ? text || "Tool failed" : undefined,
+          isError: event.isError,
+        });
+        if (displayIntent && !event.isError) {
+          run.emit({
+            type: "workspace-display",
+            intent: displayIntent,
+          });
+        }
+      }
+    });
+
+    await piSession.sendUserMessage(
+      await buildPiUserContent(requestBody.message)
+    );
+
+    await createWorkspaceCheckpoint({
+      roots: workspaceRoots,
+      conversationPath: chat.workspacePath,
+      checkpointId: currentCheckpointId(piSession.sessionManager),
+    });
+
+    await persistWorkspaceChanges();
+
+    if (shouldGenerateMetadata) {
+      const metadata = await generateConversationMetadata({
+        chatId: chat.id,
+        entries: piSession.sessionManager.getBranch(),
+        selectedModelId: selectedChatModel,
+        signal: run.abortSignal,
+      });
+      if (metadata) {
+        await updateChatMetadataById({
+          chatId: chat.id,
+          title: metadata.title,
+          summary: metadata.summary,
+        });
+        run.emit({
+          type: "title",
+          title: metadata.title,
+        });
+      }
+    }
+
+    run.emit({
+      type: "done",
+      sessionFilePath: piSession.sessionFile,
+      messages: piEntriesToChatMessages(
+        piSession.sessionManager.getBranch(),
+        chat.id
+      ),
+    });
+  } catch (error) {
+    if (run.isStopRequested) {
+      run.emit({ type: "stopped" });
+      return;
+    }
+
+    run.emit({
+      type: "error",
+      message: error instanceof Error ? error.message : "Pi failed to respond.",
+    });
+  } finally {
+    unsubscribe?.();
+    run.abortSignal.removeEventListener("abort", abort);
+    piSession?.dispose();
+  }
 }
 
 export async function POST(request: Request) {
@@ -462,7 +867,32 @@ export async function POST(request: Request) {
     return new ChatbotError("unauthorized:chat").toResponse();
   }
 
-  if (locks.has(requestBody.id)) {
+  await checkIpRateLimit(ipAddress(request));
+
+  const selectedChatModel = allowedModelIds.has(requestBody.selectedChatModel)
+    ? requestBody.selectedChatModel
+    : DEFAULT_CHAT_MODEL;
+  const assistantMessageId = requestBody.assistantMessageId ?? generateUUID();
+
+  const run = startChatRun({
+    assistantMessageId,
+    chatId: requestBody.id,
+    initialMessages: createSubmittedMessages({
+      assistantMessageId,
+      branchFromEntryId: requestBody.branchFromEntryId,
+      existingMessages: [],
+      message: requestBody.message,
+    }),
+    producer: (activeRun) =>
+      producePiChatRun({
+        assistantMessageId,
+        requestBody,
+        run: activeRun,
+        selectedChatModel,
+      }),
+  });
+
+  if (!run) {
     return Response.json(
       {
         code: "conversation_busy",
@@ -472,366 +902,12 @@ export async function POST(request: Request) {
     );
   }
 
-  await checkIpRateLimit(ipAddress(request));
-
-  const selectedChatModel = allowedModelIds.has(requestBody.selectedChatModel)
-    ? requestBody.selectedChatModel
-    : DEFAULT_CHAT_MODEL;
-
-  locks.add(requestBody.id);
-
-  try {
-    let chat = await getChatById({ id: requestBody.id });
-    let shouldGenerateMetadata = false;
-    const initialTitle = createInitialConversationTitle(requestBody.message);
-
-    if (!chat) {
-      const project = await getOrCreateProject(requestBody.projectId);
-      const workspace = await ensureConversationWorkspace({
-        userId: project.userId,
-        projectId: project.id,
-        conversationId: requestBody.id,
-      });
-
-      shouldGenerateMetadata = true;
-
-      if (isTestEnvironment) {
-        chat = await createConversationMetadata({
-          id: requestBody.id,
-          userId: project.userId,
-          projectId: project.id,
-          title: initialTitle,
-          piSessionFilePath: path.join(
-            workspace.conversationPath,
-            "pi-session.jsonl"
-          ),
-        });
-      } else {
-        const piSession = await createPiSdkSession({
-          workspacePath: workspace.conversationPath,
-          sharedPath: workspace.sharedPath,
-          chatId: requestBody.id,
-          selectedModelId: selectedChatModel,
-        });
-        chat = await createConversationMetadata({
-          id: requestBody.id,
-          userId: project.userId,
-          projectId: project.id,
-          title: initialTitle,
-          piSessionFilePath: piSession.sessionFile ?? "",
-        });
-        piSession.dispose();
-      }
-    }
-
-    if (!chat) {
-      locks.delete(requestBody.id);
-      return new ChatbotError("bad_request:api").toResponse();
-    }
-
-    const workspaceRoots = getWorkspaceRoots(chat);
-
-    const stream = new ReadableStream<Uint8Array>({
-      async start(controller) {
-        const encoder = new TextEncoder();
-        let piSession: Awaited<ReturnType<typeof createPiSdkSession>> | null =
-          null;
-        let unsubscribe: (() => void) | null = null;
-        const abort = () => {
-          piSession?.abort().catch(() => undefined);
-        };
-
-        try {
-          if (shouldGenerateMetadata) {
-            writeNdjson(controller, encoder, {
-              type: "title",
-              title: chat.title,
-            });
-          }
-
-          const beforeSnapshot = await snapshotWorkspaceFiles(workspaceRoots);
-          const persistWorkspaceChanges = async () => {
-            const afterSnapshot = await snapshotWorkspaceFiles(workspaceRoots);
-            await writeWorkspaceChanges({
-              conversationPath: chat.workspacePath,
-              changes: diffWorkspaceSnapshots(beforeSnapshot, afterSnapshot),
-            });
-          };
-
-          if (isTestEnvironment) {
-            const entries = await runMockPiTurn({
-              chat,
-              message: requestBody.message,
-              branchFromEntryId: requestBody.branchFromEntryId,
-              controller,
-              encoder,
-            });
-            await persistWorkspaceChanges();
-            if (shouldGenerateMetadata) {
-              const metadata = await generateConversationMetadata({
-                chatId: chat.id,
-                entries,
-                selectedModelId: selectedChatModel,
-                signal: request.signal,
-              });
-              if (metadata) {
-                await updateChatMetadataById({
-                  chatId: chat.id,
-                  title: metadata.title,
-                  summary: metadata.summary,
-                });
-                writeNdjson(controller, encoder, {
-                  type: "title",
-                  title: metadata.title,
-                });
-              }
-            }
-            controller.close();
-            return;
-          }
-
-          piSession = await createPiSdkSession({
-            workspacePath: chat.workspacePath,
-            sharedPath: workspaceRoots.sharedPath,
-            chatId: chat.id,
-            sessionFilePath: chat.piSessionFilePath,
-            selectedModelId: selectedChatModel,
-          });
-
-          applyRequestedBranch(
-            piSession.sessionManager,
-            requestBody.branchFromEntryId
-          );
-
-          await createWorkspaceCheckpoint({
-            roots: workspaceRoots,
-            conversationPath: chat.workspacePath,
-            checkpointId: currentCheckpointId(piSession.sessionManager),
-          });
-
-          if (
-            piSession.sessionFile &&
-            piSession.sessionFile !== chat.piSessionFilePath
-          ) {
-            await updateChatPiSessionFilePathById({
-              chatId: chat.id,
-              piSessionFilePath: piSession.sessionFile,
-            });
-          }
-
-          request.signal.addEventListener("abort", abort, { once: true });
-
-          const streamingToolCalls = new Map<string, StreamingToolCall>();
-
-          unsubscribe = piSession.subscribe((event) => {
-            if (
-              event.type === "message_update" &&
-              event.assistantMessageEvent.type === "text_delta"
-            ) {
-              writeNdjson(controller, encoder, {
-                type: "text-delta",
-                delta: event.assistantMessageEvent.delta,
-              });
-            }
-
-            if (
-              event.type === "message_update" &&
-              event.assistantMessageEvent.type === "thinking_delta"
-            ) {
-              writeNdjson(controller, encoder, {
-                type: "thinking-delta",
-                delta: event.assistantMessageEvent.delta,
-              });
-            }
-
-            if (
-              event.type === "message_update" &&
-              event.assistantMessageEvent.type === "toolcall_start"
-            ) {
-              const block = getAssistantToolCallBlock(
-                event.assistantMessageEvent
-              );
-              if (block) {
-                const toolCallId = block.id ?? `tool-${block.contentIndex}`;
-                const toolName = block.name ?? "tool";
-                streamingToolCalls.set(String(block.contentIndex), {
-                  toolCallId,
-                  toolName,
-                  inputText: "",
-                });
-                writeNdjson(controller, encoder, {
-                  type: "tool-input-start",
-                  toolCallId,
-                  toolName,
-                });
-              }
-            }
-
-            if (
-              event.type === "message_update" &&
-              event.assistantMessageEvent.type === "toolcall_delta"
-            ) {
-              const block = getAssistantToolCallBlock(
-                event.assistantMessageEvent
-              );
-              if (block) {
-                const key = String(block.contentIndex);
-                const existing = streamingToolCalls.get(key);
-                const toolCallId =
-                  existing?.toolCallId ??
-                  block.id ??
-                  `tool-${block.contentIndex}`;
-                const toolName = existing?.toolName ?? block.name ?? "tool";
-                const delta =
-                  typeof event.assistantMessageEvent.delta === "string"
-                    ? event.assistantMessageEvent.delta
-                    : "";
-                const inputText = `${existing?.inputText ?? ""}${delta}`;
-                streamingToolCalls.set(key, {
-                  toolCallId,
-                  toolName,
-                  inputText,
-                });
-                writeNdjson(controller, encoder, {
-                  type: "tool-input-delta",
-                  toolCallId,
-                  toolName,
-                  inputText,
-                });
-              }
-            }
-
-            if (
-              event.type === "message_update" &&
-              event.assistantMessageEvent.type === "toolcall_end"
-            ) {
-              const block = getAssistantToolCallBlock(
-                event.assistantMessageEvent
-              );
-              if (block) {
-                streamingToolCalls.delete(String(block.contentIndex));
-              }
-            }
-
-            if (event.type === "tool_execution_start") {
-              writeNdjson(controller, encoder, {
-                type: "tool-start",
-                toolCallId: event.toolCallId,
-                toolName: event.toolName,
-                input: event.args,
-              });
-            }
-
-            if (event.type === "tool_execution_update") {
-              writeNdjson(controller, encoder, {
-                type: "tool-update",
-                toolCallId: event.toolCallId,
-                toolName: event.toolName,
-                output: previewToolOutput(event.partialResult),
-              });
-            }
-
-            if (event.type === "tool_execution_end") {
-              const text = contentToText(event.result?.content);
-              const displayIntent = displayIntentFromToolResult(
-                event.result?.details
-              );
-              writeNdjson(controller, encoder, {
-                type: "tool-end",
-                toolCallId: event.toolCallId,
-                toolName: event.toolName,
-                output: displayIntent
-                  ? text || "Opened in the preview pane."
-                  : previewToolOutput(event.result?.details ?? text),
-                displayIntent: displayIntent ?? undefined,
-                errorText: event.isError ? text || "Tool failed" : undefined,
-                isError: event.isError,
-              });
-              if (displayIntent && !event.isError) {
-                writeNdjson(controller, encoder, {
-                  type: "workspace-display",
-                  intent: displayIntent,
-                });
-              }
-            }
-          });
-
-          await piSession.sendUserMessage(
-            await buildPiUserContent(requestBody.message)
-          );
-
-          await createWorkspaceCheckpoint({
-            roots: workspaceRoots,
-            conversationPath: chat.workspacePath,
-            checkpointId: currentCheckpointId(piSession.sessionManager),
-          });
-
-          await persistWorkspaceChanges();
-
-          if (shouldGenerateMetadata) {
-            const metadata = await generateConversationMetadata({
-              chatId: chat.id,
-              entries: piSession.sessionManager.getBranch(),
-              selectedModelId: selectedChatModel,
-              signal: request.signal,
-            });
-            if (metadata) {
-              await updateChatMetadataById({
-                chatId: chat.id,
-                title: metadata.title,
-                summary: metadata.summary,
-              });
-              writeNdjson(controller, encoder, {
-                type: "title",
-                title: metadata.title,
-              });
-            }
-          }
-
-          writeNdjson(controller, encoder, {
-            type: "done",
-            sessionFilePath: piSession.sessionFile,
-            messages: piEntriesToChatMessages(
-              piSession.sessionManager.getBranch(),
-              chat.id
-            ),
-          });
-          controller.close();
-        } catch (error) {
-          writeNdjson(controller, encoder, {
-            type: "error",
-            message:
-              error instanceof Error ? error.message : "Pi failed to respond.",
-          });
-          controller.close();
-        } finally {
-          unsubscribe?.();
-          request.signal.removeEventListener("abort", abort);
-          piSession?.dispose();
-          locks.delete(requestBody.id);
-        }
-      },
-      cancel() {
-        locks.delete(requestBody.id);
-      },
-    });
-
-    return new Response(stream, {
-      headers: {
-        "Cache-Control": "no-cache",
-        "Content-Type": "application/x-ndjson; charset=utf-8",
-      },
-    });
-  } catch (error) {
-    locks.delete(requestBody.id);
-
-    if (error instanceof ChatbotError) {
-      return error.toResponse();
-    }
-
-    console.error("Unhandled error in Pi chat API:", error);
-    return new ChatbotError("offline:chat").toResponse();
-  }
+  return new Response(run.toReadableStream(), {
+    headers: {
+      "Cache-Control": "no-cache",
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+    },
+  });
 }
 
 export async function DELETE(request: Request) {

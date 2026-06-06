@@ -22,6 +22,7 @@ const userMessageSchema = z.object({
 
 export const postRequestBodySchema = z.object({
   id: z.string().uuid(),
+  assistantMessageId: z.string().uuid().optional(),
   projectId: z.string().uuid().optional(),
   message: userMessageSchema,
   selectedChatModel: z.string(),

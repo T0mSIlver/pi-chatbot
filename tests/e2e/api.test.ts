@@ -2,18 +2,32 @@ import { expect, type Page, test } from "@playwright/test";
 
 const CHAT_URL_REGEX = /\/chat\/[\w-]+/;
 const ERROR_TEXT_REGEX = /error|failed|trouble/i;
+const DEFAULT_TEST_MODEL = "llamacpp/qwen36dense-27b";
 
 async function gotoHomeWithProject(page: Page) {
-  const projectsResponse = page.waitForResponse(
-    (response) =>
-      response.url().includes("/api/projects") && response.status() === 200
-  );
   await page.goto("/");
-  await projectsResponse;
   await expect(page.getByTestId("project-selector")).not.toContainText(
     "Loading...",
     { timeout: 30_000 }
   );
+}
+
+async function sendSlowBackgroundMessage(page: Page, message: string) {
+  const chatResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/chat") &&
+      response.request().method() === "POST" &&
+      response.status() === 200
+  );
+
+  await page.getByTestId("multimodal-input").fill(message);
+  await page.getByTestId("send-button").click();
+  await chatResponse;
+  await expect(page).toHaveURL(CHAT_URL_REGEX, { timeout: 10_000 });
+
+  const chatId = page.url().split("/chat/").at(-1);
+  expect(chatId).toBeTruthy();
+  return chatId ?? "";
 }
 
 test.describe("Chat API Integration", () => {
@@ -39,10 +53,11 @@ test.describe("Chat API Integration", () => {
     await page.getByTestId("multimodal-input").fill("Use a tool");
     await page.getByTestId("send-button").click();
 
-    await expect(page.getByTestId("pi-tool-block").first()).toBeVisible({
+    const toolBlock = page.getByTestId("pi-tool-block").first();
+    await expect(toolBlock).toBeVisible({
       timeout: 30_000,
     });
-    await expect(page.getByText("read").first()).toBeVisible();
+    await expect(toolBlock).toContainText("read");
   });
 
   test("renders interleaved thinking inline around tool calls", async ({
@@ -148,6 +163,128 @@ test.describe("Chat API Integration", () => {
       await firstContext.close();
       await secondContext.close();
     }
+  });
+
+  test("finishes a background response after the initiating tab closes", async ({
+    browser,
+  }) => {
+    const firstContext = await browser.newContext();
+    const firstPage = await firstContext.newPage();
+    const secondContext = await browser.newContext();
+    const secondPage = await secondContext.newPage();
+    let chatId = "";
+
+    try {
+      await gotoHomeWithProject(firstPage);
+      chatId = await sendSlowBackgroundMessage(
+        firstPage,
+        `Slow background close ${Date.now()}`
+      );
+      await firstPage.close();
+
+      await secondPage.goto(`/chat/${chatId}`);
+      await expect(
+        secondPage.getByText("This is a mocked Pi response")
+      ).toBeVisible({ timeout: 30_000 });
+    } finally {
+      if (chatId) {
+        await secondPage.request.delete(`/api/chat?id=${chatId}`);
+      }
+      await firstContext.close();
+      await secondContext.close();
+    }
+  });
+
+  test("reattaches to a running response after reload", async ({ page }) => {
+    await gotoHomeWithProject(page);
+    const chatId = await sendSlowBackgroundMessage(
+      page,
+      `Slow background reload ${Date.now()}`
+    );
+
+    await page.reload();
+    await expect(page).toHaveURL(new RegExp(`/chat/${chatId}$`));
+    await expect(page.getByTestId("stop-button")).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(page.getByText("This is a mocked Pi response")).toBeVisible({
+      timeout: 30_000,
+    });
+  });
+
+  test("continues when the response stream is canceled without stop", async ({
+    page,
+  }) => {
+    await gotoHomeWithProject(page);
+
+    const chatId = await page.evaluate(
+      async ({ modelId }) => {
+        const id = crypto.randomUUID();
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          body: JSON.stringify({
+            id,
+            selectedChatModel: modelId,
+            message: {
+              id: crypto.randomUUID(),
+              role: "user",
+              parts: [
+                { type: "text", text: "Slow background canceled stream" },
+              ],
+            },
+          }),
+        });
+
+        if (!response.body) {
+          throw new Error("No response body");
+        }
+
+        const reader = response.body.getReader();
+        await reader.read();
+        await reader.cancel();
+        return id;
+      },
+      { modelId: DEFAULT_TEST_MODEL }
+    );
+
+    await expect
+      .poll(async () => {
+        const response = await page.request.get(
+          `/api/messages?chatId=${chatId}`
+        );
+        if (!response.ok()) {
+          return "";
+        }
+        return JSON.stringify(await response.json());
+      })
+      .toContain("This is a mocked Pi response");
+
+    await page.request.delete(`/api/chat?id=${chatId}`);
+  });
+
+  test("stops a background response and allows another message", async ({
+    page,
+  }) => {
+    await gotoHomeWithProject(page);
+    const chatId = await sendSlowBackgroundMessage(
+      page,
+      `Slow background stop ${Date.now()}`
+    );
+
+    const stopResponse = page.waitForResponse(
+      (response) =>
+        response.url().includes(`/api/chat/${chatId}/stop`) &&
+        response.request().method() === "POST" &&
+        response.status() === 200
+    );
+    await page.getByTestId("stop-button").click();
+    await stopResponse;
+
+    await page.getByTestId("multimodal-input").fill("Hello after stop");
+    await page.getByTestId("send-button").click();
+    await expect(page.getByText("This is a mocked Pi response")).toBeVisible({
+      timeout: 30_000,
+    });
   });
 
   test("clears input after sending", async ({ page }) => {

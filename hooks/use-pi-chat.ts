@@ -11,10 +11,10 @@ import {
   getChatHistoryPaginationKey,
 } from "@/lib/chat-history";
 import type { PiStreamEvent } from "@/lib/pi/events";
+import { applyPiStreamEventToMessages } from "@/lib/pi/stream-state";
 import type {
   ChatMessage,
   ChatStatus,
-  PiToolUIPart,
   SendMessage,
   SetMessages,
   WorkspaceChange,
@@ -87,162 +87,9 @@ function checkpointBefore(message: ChatMessage) {
   return message.metadata?.parentId ?? ROOT_CHECKPOINT_ID;
 }
 
-function mergeTextDelta(message: ChatMessage, delta: string) {
-  const lastPart = message.parts.at(-1);
-  if (lastPart?.type === "text") {
-    lastPart.text += delta;
-  } else {
-    message.parts.push({ type: "text", text: delta });
-  }
-}
-
-function mergeThinkingDelta(message: ChatMessage, delta: string) {
-  const lastPart = message.parts.at(-1);
-  if (lastPart?.type === "reasoning") {
-    lastPart.text += delta;
-    lastPart.state = "streaming";
-  } else {
-    message.parts.push({ type: "reasoning", text: delta, state: "streaming" });
-  }
-}
-
-function finishActiveReasoning(message: ChatMessage) {
-  const lastPart = message.parts.at(-1);
-  if (lastPart?.type === "reasoning" && lastPart.state === "streaming") {
-    lastPart.state = "done";
-  }
-}
-
-function findToolPart(message: ChatMessage, toolCallId: string) {
-  return message.parts.find(
-    (part): part is PiToolUIPart =>
-      part.type === "tool-pi" && part.toolCallId === toolCallId
-  );
-}
-
-function updateAssistantMessage(
-  messages: ChatMessage[],
-  assistantId: string,
-  event: PiStreamEvent
-) {
-  return messages.map((message) => {
-    if (message.id !== assistantId || message.role !== "assistant") {
-      return message;
-    }
-
-    const next: ChatMessage = {
-      ...message,
-      parts: message.parts.map((part) => ({ ...part })),
-    };
-
-    if (event.type === "text-delta") {
-      finishActiveReasoning(next);
-      mergeTextDelta(next, event.delta);
-    }
-
-    if (event.type === "thinking-delta") {
-      mergeThinkingDelta(next, event.delta);
-    }
-
-    if (event.type === "tool-input-start") {
-      finishActiveReasoning(next);
-      const toolPart = findToolPart(next, event.toolCallId);
-      if (toolPart) {
-        toolPart.state = "input-streaming";
-        toolPart.toolName = event.toolName;
-        toolPart.inputText = event.inputText ?? "";
-      } else {
-        next.parts.push({
-          type: "tool-pi",
-          toolCallId: event.toolCallId,
-          toolName: event.toolName,
-          state: "input-streaming",
-          inputText: event.inputText ?? "",
-        });
-      }
-    }
-
-    if (event.type === "tool-input-delta") {
-      finishActiveReasoning(next);
-      const toolPart = findToolPart(next, event.toolCallId);
-      if (toolPart) {
-        toolPart.state = "input-streaming";
-        toolPart.toolName = event.toolName;
-        toolPart.inputText = event.inputText;
-      } else {
-        next.parts.push({
-          type: "tool-pi",
-          toolCallId: event.toolCallId,
-          toolName: event.toolName,
-          state: "input-streaming",
-          inputText: event.inputText,
-        });
-      }
-    }
-
-    if (event.type === "tool-start") {
-      finishActiveReasoning(next);
-      const toolPart = findToolPart(next, event.toolCallId);
-      if (toolPart) {
-        toolPart.state = "input-available";
-        toolPart.toolName = event.toolName;
-        toolPart.input = event.input;
-        toolPart.inputText = undefined;
-      } else {
-        next.parts.push({
-          type: "tool-pi",
-          toolCallId: event.toolCallId,
-          toolName: event.toolName,
-          state: "input-available",
-          input: event.input,
-        });
-      }
-    }
-
-    if (event.type === "tool-update") {
-      finishActiveReasoning(next);
-      const toolPart = findToolPart(next, event.toolCallId);
-      if (toolPart) {
-        toolPart.output = event.output;
-      }
-    }
-
-    if (event.type === "tool-end") {
-      finishActiveReasoning(next);
-      const toolPart = findToolPart(next, event.toolCallId);
-      if (toolPart) {
-        toolPart.state = event.isError ? "output-error" : "output-available";
-        toolPart.output = event.output;
-        toolPart.displayIntent = event.displayIntent;
-        toolPart.errorText = event.errorText;
-        toolPart.isError = event.isError;
-      } else {
-        next.parts.push({
-          type: "tool-pi",
-          toolCallId: event.toolCallId,
-          toolName: event.toolName,
-          state: event.isError ? "output-error" : "output-available",
-          output: event.output,
-          displayIntent: event.displayIntent,
-          errorText: event.errorText,
-          isError: event.isError,
-        });
-      }
-    }
-
-    if (event.type === "error") {
-      finishActiveReasoning(next);
-      mergeTextDelta(next, event.message);
-    }
-
-    if (event.type === "done") {
-      next.parts = next.parts.map((part) =>
-        part.type === "reasoning" ? { ...part, state: "done" } : part
-      );
-    }
-
-    return next;
-  });
+function latestAssistantMessageId(messages: ChatMessage[]) {
+  return [...messages].reverse().find((message) => message.role === "assistant")
+    ?.id;
 }
 
 async function* readNdjson(stream: ReadableStream<Uint8Array>) {
@@ -311,6 +158,7 @@ export function usePiChat() {
   const [pendingEdit, setPendingEdit] = useState<PendingEdit | null>(null);
   const [currentModelId, setCurrentModelId] = useState(DEFAULT_CHAT_MODEL);
   const abortControllersRef = useRef(new Map<string, AbortController>());
+  const activeAssistantMessageIdsRef = useRef(new Map<string, string>());
   const pendingEditRef = useRef<PendingEdit | null>(null);
   const restoreConfirmationResolverRef = useRef<
     ((confirmed: boolean) => void) | null
@@ -415,6 +263,159 @@ export function usePiChat() {
     );
     mutate((key) => typeof key === "string" && key.includes("/api/history"));
   }, [mutate]);
+
+  const consumeChatStream = useCallback(
+    async ({
+      assistantMessageId,
+      stream,
+      targetChatId,
+    }: {
+      assistantMessageId: string;
+      stream: ReadableStream<Uint8Array>;
+      targetChatId: string;
+    }) => {
+      let activeAssistantMessageId = assistantMessageId;
+
+      for await (const event of readNdjson(stream)) {
+        if (event.type === "snapshot") {
+          activeAssistantMessageId =
+            latestAssistantMessageId(event.messages) ??
+            activeAssistantMessageId;
+          activeAssistantMessageIdsRef.current.set(
+            targetChatId,
+            activeAssistantMessageId
+          );
+          updateChatRuntimeState(targetChatId, (state) => ({
+            ...state,
+            latestWorkspaceDisplayIntent:
+              event.latestWorkspaceDisplayIntent ?? null,
+            messages: event.messages,
+            status: event.status,
+          }));
+          continue;
+        }
+
+        if (event.type === "title") {
+          refreshHistory();
+          continue;
+        }
+
+        if (event.type === "workspace-display") {
+          updateChatRuntimeState(targetChatId, (state) => ({
+            ...state,
+            latestWorkspaceDisplayIntent: event.intent,
+          }));
+          continue;
+        }
+
+        if (event.type === "tool-end" && event.displayIntent) {
+          updateChatRuntimeState(targetChatId, (state) => ({
+            ...state,
+            latestWorkspaceDisplayIntent: event.displayIntent ?? null,
+          }));
+        }
+
+        setChatMessages(targetChatId, (current) =>
+          applyPiStreamEventToMessages({
+            assistantMessageId: activeAssistantMessageId,
+            event,
+            messages: current,
+          })
+        );
+
+        if (event.type === "stopped") {
+          updateChatRuntimeState(targetChatId, (state) => ({
+            ...state,
+            status: "ready",
+          }));
+          return;
+        }
+
+        if (event.type === "error") {
+          throw new Error(event.message);
+        }
+      }
+    },
+    [refreshHistory, setChatMessages, updateChatRuntimeState]
+  );
+
+  useEffect(() => {
+    if (isNewChat || abortControllersRef.current.has(chatId)) {
+      return;
+    }
+
+    const abortController = new AbortController();
+    let attached = false;
+
+    const attachToRunningChat = async () => {
+      try {
+        const response = await fetch(
+          `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/chat/${chatId}/stream`,
+          { signal: abortController.signal }
+        );
+
+        if (response.status === 204) {
+          return;
+        }
+
+        if (!response.ok || !response.body) {
+          return;
+        }
+
+        attached = true;
+        abortControllersRef.current.set(chatId, abortController);
+        loadedChatIdsRef.current.add(chatId);
+
+        await consumeChatStream({
+          assistantMessageId:
+            activeAssistantMessageIdsRef.current.get(chatId) ?? generateUUID(),
+          stream: response.body,
+          targetChatId: chatId,
+        });
+
+        updateChatRuntimeState(chatId, (state) => ({
+          ...state,
+          status: "ready",
+        }));
+        refreshHistory();
+        mutate(messagesKey);
+      } catch (error) {
+        if ((error as DOMException).name !== "AbortError") {
+          toast.error(
+            error instanceof Error ? error.message : "Pi failed to respond."
+          );
+          updateChatRuntimeState(chatId, (state) => ({
+            ...state,
+            status: "error",
+          }));
+        }
+      } finally {
+        if (abortControllersRef.current.get(chatId) === abortController) {
+          abortControllersRef.current.delete(chatId);
+        }
+      }
+    };
+
+    attachToRunningChat();
+
+    return () => {
+      abortController.abort();
+      if (
+        attached &&
+        abortControllersRef.current.get(chatId) === abortController
+      ) {
+        abortControllersRef.current.delete(chatId);
+      }
+    };
+  }, [
+    chatId,
+    consumeChatStream,
+    isNewChat,
+    messagesKey,
+    mutate,
+    refreshHistory,
+    updateChatRuntimeState,
+  ]);
 
   const resolveRestoreConfirmation = useCallback((confirmed: boolean) => {
     const resolver = restoreConfirmationResolverRef.current;
@@ -588,6 +589,10 @@ export function usePiChat() {
         parts: [],
         metadata: { createdAt: new Date().toISOString() },
       };
+      activeAssistantMessageIdsRef.current.set(
+        targetChatId,
+        assistantMessage.id
+      );
 
       setPendingEdit(null);
       editOptions?.onAccepted?.();
@@ -627,6 +632,7 @@ export function usePiChat() {
             method: "POST",
             body: JSON.stringify({
               id: targetChatId,
+              assistantMessageId: assistantMessage.id,
               message: userMessage,
               selectedChatModel: targetModelId,
               branchFromEntryId: editOptions?.branchFromEntryId,
@@ -646,40 +652,11 @@ export function usePiChat() {
           status: "streaming",
         }));
 
-        for await (const event of readNdjson(response.body)) {
-          if (event.type === "title") {
-            refreshHistory();
-            continue;
-          }
-
-          if (event.type === "workspace-display") {
-            updateChatRuntimeState(targetChatId, (state) => ({
-              ...state,
-              latestWorkspaceDisplayIntent: event.intent,
-            }));
-            continue;
-          }
-
-          if (event.type === "done" && event.messages) {
-            setChatMessages(targetChatId, event.messages);
-            continue;
-          }
-
-          if (event.type === "tool-end" && event.displayIntent) {
-            updateChatRuntimeState(targetChatId, (state) => ({
-              ...state,
-              latestWorkspaceDisplayIntent: event.displayIntent ?? null,
-            }));
-          }
-
-          setChatMessages(targetChatId, (current) =>
-            updateAssistantMessage(current, assistantMessage.id, event)
-          );
-
-          if (event.type === "error") {
-            throw new Error(event.message);
-          }
-        }
+        await consumeChatStream({
+          assistantMessageId: assistantMessage.id,
+          stream: response.body,
+          targetChatId,
+        });
 
         updateChatRuntimeState(targetChatId, (state) => ({
           ...state,
@@ -715,25 +692,32 @@ export function usePiChat() {
     },
     [
       chatId,
+      consumeChatStream,
       currentModelId,
       mutate,
       refreshHistory,
       restoreCurrentWorkspace,
-      setChatMessages,
       updateChatRuntimeState,
     ]
   );
 
   const stop = useCallback(() => {
+    fetch(
+      `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/chat/${chatId}/stop`,
+      { method: "POST" }
+    ).catch(() => undefined);
     abortControllersRef.current.get(chatId)?.abort();
+    abortControllersRef.current.delete(chatId);
     updateChatRuntimeState(chatId, (state) => ({
       ...state,
-      messages: state.messages.map((message) => ({
-        ...message,
-        parts: message.parts.map((part) =>
-          part.type === "reasoning" ? { ...part, state: "done" } : part
-        ),
-      })),
+      messages: applyPiStreamEventToMessages({
+        assistantMessageId:
+          activeAssistantMessageIdsRef.current.get(chatId) ??
+          latestAssistantMessageId(state.messages) ??
+          generateUUID(),
+        event: { type: "stopped" },
+        messages: state.messages,
+      }),
       status: "ready",
     }));
   }, [chatId, updateChatRuntimeState]);
