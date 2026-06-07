@@ -1,5 +1,8 @@
+"use client";
+
+import { BracesIcon } from "lucide-react";
 import Link from "next/link";
-import { memo } from "react";
+import { memo, useState } from "react";
 import type { Chat } from "@/lib/db/schema";
 import {
   DropdownMenu,
@@ -13,6 +16,7 @@ import {
   SidebarMenuItem,
 } from "../ui/sidebar";
 import { MoreHorizontalIcon, TrashIcon } from "./icons";
+import { ProviderCaptureDialog } from "./provider-capture-dialog";
 
 const PureChatItem = ({
   chat,
@@ -27,6 +31,8 @@ const PureChatItem = ({
   onDelete: (chatId: string) => void;
   setOpenMobile: (open: boolean) => void;
 }) => {
+  const [showProviderCaptures, setShowProviderCaptures] = useState(false);
+
   return (
     <SidebarMenuItem>
       <SidebarMenuButton
@@ -71,6 +77,13 @@ const PureChatItem = ({
 
         <DropdownMenuContent align="end" side="bottom">
           <DropdownMenuItem
+            data-testid="inspect-openai-payload-item"
+            onSelect={() => setShowProviderCaptures(true)}
+          >
+            <BracesIcon />
+            <span>Inspect OpenAI payload</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem
             onSelect={() => onDelete(chat.id)}
             variant="destructive"
           >
@@ -79,6 +92,11 @@ const PureChatItem = ({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      <ProviderCaptureDialog
+        chatId={chat.id}
+        onOpenChange={setShowProviderCaptures}
+        open={showProviderCaptures}
+      />
     </SidebarMenuItem>
   );
 };

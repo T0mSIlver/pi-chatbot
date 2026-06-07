@@ -8,6 +8,8 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { createFetchWebpageTool } from "./fetch-webpage-tool";
 import { createPiModelRegistry, findPiModel } from "./model";
+import { withProviderCaptureModel } from "./provider-capture-provider";
+import type { ProviderCaptureContext } from "./provider-captures";
 import { createShowcaseFileTool } from "./showcase-tool";
 
 /**
@@ -28,15 +30,20 @@ export async function createPiSdkSession({
   selectedModelId,
   chatId,
   sharedPath,
+  providerCapture,
 }: {
   workspacePath: string;
   sessionFilePath?: string | null;
   selectedModelId?: string;
   chatId: string;
   sharedPath: string;
+  providerCapture?: ProviderCaptureContext;
 }) {
   const { agentDir, authStorage, modelRegistry } = createPiModelRegistry();
-  const model = findPiModel({ modelRegistry, selectedModelId });
+  const model = withProviderCaptureModel(
+    findPiModel({ modelRegistry, selectedModelId }),
+    providerCapture
+  );
 
   const sessionManager = sessionFilePath
     ? SessionManager.open(sessionFilePath, undefined, workspacePath)

@@ -10,6 +10,8 @@ import {
 import { z } from "zod";
 import { isTestEnvironment } from "@/lib/constants";
 import { createPiModelRegistry, findPiModel } from "./model";
+import { withProviderCaptureModel } from "./provider-capture-provider";
+import type { ProviderCaptureContext } from "./provider-captures";
 
 const MAX_TRANSCRIPT_CHARS = 12_000;
 const METADATA_TIMEOUT_MS = 20_000;
@@ -198,11 +200,13 @@ function fallbackConversationMetadata(entries: SessionEntry[]) {
 export async function generateConversationMetadata({
   chatId,
   entries,
+  providerCapture,
   selectedModelId,
   signal,
 }: {
   chatId: string;
   entries: SessionEntry[];
+  providerCapture?: ProviderCaptureContext;
   selectedModelId?: string;
   signal?: AbortSignal;
 }): Promise<ConversationMetadata | null> {
@@ -274,7 +278,7 @@ export async function generateConversationMetadata({
     });
 
     const response = await completeSimple(
-      model,
+      withProviderCaptureModel(model, providerCapture) ?? model,
       {
         systemPrompt:
           "You generate concise metadata for a coding assistant conversation. Return only valid JSON.",

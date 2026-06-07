@@ -112,6 +112,121 @@ test.describe("Chat Page", () => {
       .toBe(0);
   });
 
+  test("opens OpenAI payload inspector from the sidebar", async ({
+    baseURL,
+    page,
+  }) => {
+    const timestamp = new Date().toISOString();
+    const chatId = "00000000-0000-4000-8000-000000000101";
+    const projectId = "00000000-0000-4000-8000-000000000102";
+    const userId = "00000000-0000-4000-8000-000000000103";
+    const capture = {
+      id: "capture-1",
+      chatId,
+      assistantMessageId: "assistant-1",
+      createdAt: timestamp,
+      completedAt: timestamp,
+      purpose: "chat",
+      provider: "llamacpp",
+      api: "openai-completions",
+      model: "qwen36dense-27b",
+      requestIndex: 1,
+      request: {
+        method: "POST",
+        url: "http://model.local/v1/chat/completions",
+        headers: {
+          authorization: "[redacted]",
+          "content-type": "application/json",
+        },
+        body: {
+          model: "qwen36dense-27b",
+          stream: true,
+          messages: [{ role: "user", content: "Inspect this prompt" }],
+        },
+      },
+      response: {
+        status: 200,
+        statusText: "OK",
+        headers: { "content-type": "text/event-stream" },
+        chunks: [
+          'data: {"choices":[{"delta":{"content":"Captured response"}}]}\n',
+        ],
+        rawBody:
+          'data: {"choices":[{"delta":{"content":"Captured response"}}]}\n',
+      },
+    };
+
+    await page.context().addCookies([
+      {
+        name: "sidebar_state",
+        value: "true",
+        url: baseURL ?? "http://localhost:3000",
+      },
+    ]);
+
+    await page.route("**/api/projects", async (route) => {
+      await route.fulfill({
+        json: {
+          projects: [
+            {
+              id: projectId,
+              createdAt: timestamp,
+              updatedAt: timestamp,
+              name: "General",
+              userId,
+              workspacePath: "/tmp/provider-capture-project",
+            },
+          ],
+        },
+      });
+    });
+
+    await page.route("**/api/history**", async (route) => {
+      await route.fulfill({
+        json: {
+          chats: [
+            {
+              id: chatId,
+              createdAt: timestamp,
+              updatedAt: timestamp,
+              title: "Payload debug chat",
+              summary: "Inspect provider payloads",
+              projectId,
+              userId,
+              workspacePath: "/tmp/provider-capture-chat",
+              piSessionFilePath: "/tmp/provider-capture-chat.jsonl",
+            },
+          ],
+          hasMore: false,
+          projectId,
+        },
+      });
+    });
+
+    await page.route("**/api/chat/**/provider-captures", async (route) => {
+      await route.fulfill({ json: { captures: [capture] } });
+    });
+
+    await page.goto("/");
+    const row = page
+      .locator('[data-sidebar="menu-item"]')
+      .filter({ hasText: "Payload debug chat" });
+    await expect(row).toBeVisible();
+    await row.hover();
+    await row.locator('[data-sidebar="menu-action"]').click();
+    await page.getByTestId("inspect-openai-payload-item").click();
+
+    await expect(page.getByTestId("provider-capture-dialog")).toBeVisible();
+    await expect(page.getByTestId("provider-capture-json")).toContainText(
+      '"role": "user"'
+    );
+
+    await page.getByTestId("provider-capture-response-tab").click();
+    await expect(page.getByTestId("provider-capture-json")).toContainText(
+      "Captured response"
+    );
+  });
+
   test("can type in the input field", async ({ page }) => {
     await page.goto("/");
     const input = page.getByTestId("multimodal-input");

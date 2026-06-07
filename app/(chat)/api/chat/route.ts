@@ -19,6 +19,8 @@ import { ChatbotError } from "@/lib/errors";
 import { type ChatRun, startChatRun } from "@/lib/pi/chat-runs";
 import { generateConversationMetadata } from "@/lib/pi/conversation-metadata";
 import { piEntriesToChatMessages } from "@/lib/pi/jsonl";
+import { waitForProviderCaptureWrites } from "@/lib/pi/provider-capture-transport";
+import type { ProviderCaptureCounter } from "@/lib/pi/provider-captures";
 import { createPiSdkSession } from "@/lib/pi/session";
 import {
   ensureConversationWorkspace,
@@ -565,6 +567,8 @@ async function producePiChatRun({
   }
 
   const workspaceRoots = getWorkspaceRoots(chat);
+  const providerCaptureWrites = new Set<Promise<void>>();
+  const providerCaptureCounter: ProviderCaptureCounter = { value: 0 };
   let piSession: Awaited<ReturnType<typeof createPiSdkSession>> | null = null;
   let unsubscribe: (() => void) | null = null;
   const abort = () => {
@@ -625,6 +629,14 @@ async function producePiChatRun({
       chatId: chat.id,
       sessionFilePath: chat.piSessionFilePath,
       selectedModelId: selectedChatModel,
+      providerCapture: {
+        assistantMessageId,
+        chatId: chat.id,
+        conversationPath: chat.workspacePath,
+        pendingWrites: providerCaptureWrites,
+        purpose: "chat",
+        requestCounter: providerCaptureCounter,
+      },
     });
 
     applyRequestedBranch(
@@ -811,6 +823,14 @@ async function producePiChatRun({
       const metadata = await generateConversationMetadata({
         chatId: chat.id,
         entries: piSession.sessionManager.getBranch(),
+        providerCapture: {
+          assistantMessageId,
+          chatId: chat.id,
+          conversationPath: chat.workspacePath,
+          pendingWrites: providerCaptureWrites,
+          purpose: "metadata",
+          requestCounter: providerCaptureCounter,
+        },
         selectedModelId: selectedChatModel,
         signal: run.abortSignal,
       });
@@ -826,6 +846,8 @@ async function producePiChatRun({
         });
       }
     }
+
+    await waitForProviderCaptureWrites(providerCaptureWrites);
 
     run.emit({
       type: "done",

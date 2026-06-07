@@ -111,6 +111,23 @@ test.describe("Chat API Integration", () => {
     await expect(page).toHaveURL(CHAT_URL_REGEX, { timeout: 10_000 });
   });
 
+  test("returns no provider captures before any real captures are recorded", async ({
+    page,
+  }) => {
+    await gotoHomeWithProject(page);
+
+    const chatId = await sendSlowBackgroundMessage(
+      page,
+      `Provider captures empty ${Date.now()}`
+    );
+    const response = await page.request.get(
+      `/api/chat/${chatId}/provider-captures`
+    );
+
+    expect(response.status()).toBe(200);
+    expect(await response.json()).toEqual({ captures: [] });
+  });
+
   test("shares chat history across guest browser sessions", async ({
     browser,
   }) => {
