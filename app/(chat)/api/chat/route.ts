@@ -874,6 +874,9 @@ async function producePiChatRun({
       return;
     }
 
+    // Surface the full stack server-side so path/type errors can be pinpointed.
+    console.error("[pi chat] producePiChatRun failed:", error);
+
     run.emit({
       type: "error",
       message: error instanceof Error ? error.message : "Pi failed to respond.",
