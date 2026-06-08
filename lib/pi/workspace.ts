@@ -12,6 +12,35 @@ export function getUserWorkspaceRoot(userId: string) {
   return path.join(getPiChatbotHome(), "workspaces", userId);
 }
 
+/**
+ * Workspace/session paths are stored as absolute paths in the DB. When the data
+ * is moved between machines (e.g. a Mac dev box -> a Linux server) those stored
+ * paths still point at the *old* home (`/Users/tom/.pi-chatbot/...`) while the
+ * current home is different (`/root/.pi-chatbot/...`). Re-root any stored path
+ * from its `workspaces/...` segment onto the current `getPiChatbotHome()` so the
+ * app reads/writes the right tree regardless of where the row was created.
+ */
+export function rebaseWorkspacePath(storedPath: string) {
+  if (!storedPath) {
+    return storedPath;
+  }
+
+  const home = getPiChatbotHome();
+  const resolved = path.resolve(storedPath);
+
+  if (resolved === home || resolved.startsWith(`${home}${path.sep}`)) {
+    return storedPath;
+  }
+
+  const marker = `${path.sep}workspaces${path.sep}`;
+  const index = resolved.indexOf(marker);
+  if (index === -1) {
+    return storedPath;
+  }
+
+  return path.join(home, resolved.slice(index + 1));
+}
+
 export function getProjectWorkspacePath(userId: string, projectId: string) {
   return path.join(getUserWorkspaceRoot(userId), projectId);
 }

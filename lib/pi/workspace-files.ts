@@ -20,7 +20,7 @@ import type {
   WorkspaceFileNode,
   WorkspaceScope,
 } from "@/lib/types";
-import { getProjectSharedWorkspacePath } from "./workspace";
+import { getProjectSharedWorkspacePath, rebaseWorkspacePath } from "./workspace";
 
 const INTERNAL_METADATA_DIR = ".pi-chatbot";
 const INTERNAL_FILE_NAMES = new Set([
@@ -74,7 +74,7 @@ export type WorkspaceFileRead = {
 
 export function getWorkspaceRoots(chat: Chat): WorkspaceRoots {
   return {
-    conversationPath: chat.workspacePath,
+    conversationPath: rebaseWorkspacePath(chat.workspacePath),
     sharedPath: chat.projectId
       ? getProjectSharedWorkspacePath(chat.userId, chat.projectId)
       : undefined,

@@ -31,6 +31,7 @@ import {
   ensureProjectWorkspace,
   getConversationWorkspacePath,
   moveWorkspaceToTrash,
+  rebaseWorkspacePath,
 } from "@/lib/pi/workspace";
 import {
   createWorkspaceCheckpoint,
@@ -574,6 +575,15 @@ async function producePiChatRun({
     return;
   }
 
+  // Stored paths may have been created on another machine (e.g. a Mac dev box).
+  // Re-root them onto the current home so every downstream read/write — session
+  // file, checkpoints, provider captures — targets the right workspace tree.
+  chat = {
+    ...chat,
+    workspacePath: rebaseWorkspacePath(chat.workspacePath),
+    piSessionFilePath: rebaseWorkspacePath(chat.piSessionFilePath),
+  };
+
   const workspaceRoots = getWorkspaceRoots(chat);
   const providerCaptureWrites = new Set<Promise<void>>();
   const providerCaptureCounter: ProviderCaptureCounter = { value: 0 };
@@ -987,7 +997,7 @@ export async function DELETE(request: Request) {
   const deletedChat = await deleteChatById({ id });
 
   if (deletedChat) {
-    await moveWorkspaceToTrash(deletedChat.workspacePath);
+    await moveWorkspaceToTrash(rebaseWorkspacePath(deletedChat.workspacePath));
   }
 
   return Response.json(deletedChat, { status: 200 });
