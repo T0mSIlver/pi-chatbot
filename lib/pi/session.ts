@@ -1,5 +1,6 @@
 import "server-only";
 
+import { mkdir } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import {
@@ -16,6 +17,7 @@ import type { ProviderCaptureContext } from "./provider-captures";
 import { createShowcaseFileTool } from "./showcase-tool";
 
 const require = createRequire(import.meta.url);
+let mcpAdapterEnvironmentQueue = Promise.resolve();
 
 /**
  * Skills that ship with this app (committed under `<repo>/skills`). They are
@@ -32,6 +34,47 @@ function getBundledSkillPaths() {
 function getBundledExtensionPaths() {
   const adapterPackageJson = require.resolve("pi-mcp-adapter/package.json");
   return [path.dirname(adapterPackageJson)];
+}
+
+async function withMcpAdapterEnvironment<T>(
+  workspacePath: string,
+  action: () => Promise<T>
+) {
+  const previousQueue = mcpAdapterEnvironmentQueue;
+  let releaseQueue: () => void = () => undefined;
+  mcpAdapterEnvironmentQueue = new Promise<void>((resolve) => {
+    releaseQueue = resolve;
+  });
+
+  await previousQueue;
+
+  const isolatedHome = path.join(workspacePath, ".pi", "home");
+  const isolatedAgentDir = path.join(workspacePath, ".pi", "agent");
+  const previousHome = process.env.HOME;
+  const previousPiCodingAgentDir = process.env.PI_CODING_AGENT_DIR;
+
+  try {
+    await mkdir(isolatedHome, { recursive: true });
+    await mkdir(isolatedAgentDir, { recursive: true });
+    process.env.HOME = isolatedHome;
+    process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
+
+    return await action();
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+
+    if (previousPiCodingAgentDir === undefined) {
+      delete process.env.PI_CODING_AGENT_DIR;
+    } else {
+      process.env.PI_CODING_AGENT_DIR = previousPiCodingAgentDir;
+    }
+
+    releaseQueue();
+  }
 }
 
 export async function createPiSdkSession({
@@ -52,12 +95,14 @@ export async function createPiSdkSession({
   providerCapture?: ProviderCaptureContext;
 }) {
   process.env.MCP_DIRECT_TOOLS = "__none__";
+  let mcpConfigPath: string | undefined;
 
   if (chat) {
-    await writeMcpConfigForChat({
+    const written = await writeMcpConfigForChat({
       chat,
       conversationPath: workspacePath,
     });
+    mcpConfigPath = written.configPath;
   }
 
   const { agentDir, authStorage, modelRegistry } = createPiModelRegistry();
@@ -70,30 +115,39 @@ export async function createPiSdkSession({
     ? SessionManager.open(sessionFilePath, undefined, workspacePath)
     : SessionManager.create(workspacePath);
 
-  const resourceLoader = new DefaultResourceLoader({
-    cwd: workspacePath,
-    agentDir,
-    additionalExtensionPaths: getBundledExtensionPaths(),
-    additionalSkillPaths: getBundledSkillPaths(),
-  });
-  await resourceLoader.reload();
+  const created = await withMcpAdapterEnvironment(workspacePath, async () => {
+    const resourceLoader = new DefaultResourceLoader({
+      cwd: workspacePath,
+      agentDir,
+      additionalExtensionPaths: getBundledExtensionPaths(),
+      additionalSkillPaths: getBundledSkillPaths(),
+    });
+    await resourceLoader.reload();
 
-  const created = await createAgentSession({
-    agentDir,
-    authStorage,
-    customTools: [
-      createFetchWebpageTool(),
-      createShowcaseFileTool({
-        chatId,
-        conversationPath: workspacePath,
-        sharedPath,
-      }),
-    ],
-    cwd: workspacePath,
-    model,
-    modelRegistry,
-    sessionManager,
-    resourceLoader,
+    const result = await createAgentSession({
+      agentDir,
+      authStorage,
+      customTools: [
+        createFetchWebpageTool(),
+        createShowcaseFileTool({
+          chatId,
+          conversationPath: workspacePath,
+          sharedPath,
+        }),
+      ],
+      cwd: workspacePath,
+      model,
+      modelRegistry,
+      sessionManager,
+      resourceLoader,
+    });
+
+    if (mcpConfigPath) {
+      result.session.extensionRunner.setFlagValue("mcp-config", mcpConfigPath);
+    }
+    await result.session.bindExtensions({});
+
+    return result;
   });
 
   return created.session;

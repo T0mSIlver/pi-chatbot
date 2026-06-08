@@ -28,6 +28,121 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function stringField(
+  serverId: string,
+  server: Record<string, unknown>,
+  field: string
+) {
+  const value = server[field];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new Error(`MCP server ${serverId}.${field} must be a string`);
+  }
+  return value;
+}
+
+function optionalBooleanField(
+  serverId: string,
+  server: Record<string, unknown>,
+  field: string
+) {
+  const value = server[field];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "boolean") {
+    throw new Error(`MCP server ${serverId}.${field} must be a boolean`);
+  }
+  return value;
+}
+
+function optionalNumberField(
+  serverId: string,
+  server: Record<string, unknown>,
+  field: string
+) {
+  const value = server[field];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    throw new Error(`MCP server ${serverId}.${field} must be a number`);
+  }
+  return value;
+}
+
+function scalarToString(
+  serverId: string,
+  field: string,
+  value: unknown
+): string {
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return String(value);
+  }
+  throw new Error(`MCP server ${serverId}.${field} values must be strings`);
+}
+
+function optionalStringArrayField(
+  serverId: string,
+  server: Record<string, unknown>,
+  field: string
+) {
+  const value = server[field];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`MCP server ${serverId}.${field} must be an array`);
+  }
+  return value.map((entry) => scalarToString(serverId, field, entry));
+}
+
+function optionalStringRecordField(
+  serverId: string,
+  server: Record<string, unknown>,
+  field: string
+) {
+  const value = server[field];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error(`MCP server ${serverId}.${field} must be an object`);
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [
+      key,
+      scalarToString(serverId, field, entry),
+    ])
+  );
+}
+
+function optionalDirectToolsField(
+  serverId: string,
+  server: Record<string, unknown>
+) {
+  const value = server.directTools;
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(
+      `MCP server ${serverId}.directTools must be a boolean or array`
+    );
+  }
+  return value.map((entry) => scalarToString(serverId, "directTools", entry));
+}
+
 function assertServerEntry(
   serverId: string,
   value: unknown
@@ -46,6 +161,97 @@ function assertServerEntry(
   if (!(hasCommand || hasUrl)) {
     throw new Error(`MCP server ${serverId} must define command or url`);
   }
+}
+
+function normalizeServerEntry(
+  serverId: string,
+  server: Record<string, unknown>
+) {
+  const lifecycle = server.lifecycle;
+  if (
+    lifecycle !== undefined &&
+    lifecycle !== "keep-alive" &&
+    lifecycle !== "lazy" &&
+    lifecycle !== "eager"
+  ) {
+    throw new Error(
+      `MCP server ${serverId}.lifecycle must be keep-alive, lazy, or eager`
+    );
+  }
+
+  const auth = server.auth;
+  if (
+    auth !== undefined &&
+    auth !== "oauth" &&
+    auth !== "bearer" &&
+    auth !== false
+  ) {
+    throw new Error(
+      `MCP server ${serverId}.auth must be oauth, bearer, or false`
+    );
+  }
+
+  const normalized: Record<string, unknown> = {
+    ...server,
+  };
+
+  for (const field of [
+    "command",
+    "url",
+    "cwd",
+    "bearerToken",
+    "bearerTokenEnv",
+  ]) {
+    const value = stringField(serverId, server, field);
+    if (value !== undefined) {
+      normalized[field] = value;
+    }
+  }
+
+  const args = optionalStringArrayField(serverId, server, "args");
+  if (args !== undefined) {
+    normalized.args = args;
+  }
+
+  const env = optionalStringRecordField(serverId, server, "env");
+  if (env !== undefined) {
+    normalized.env = env;
+  }
+
+  const headers = optionalStringRecordField(serverId, server, "headers");
+  if (headers !== undefined) {
+    normalized.headers = headers;
+  }
+
+  const excludeTools = optionalStringArrayField(
+    serverId,
+    server,
+    "excludeTools"
+  );
+  if (excludeTools !== undefined) {
+    normalized.excludeTools = excludeTools;
+  }
+
+  const directTools = optionalDirectToolsField(serverId, server);
+  if (directTools !== undefined) {
+    normalized.directTools = directTools;
+  }
+
+  for (const field of ["idleTimeout"]) {
+    const value = optionalNumberField(serverId, server, field);
+    if (value !== undefined) {
+      normalized[field] = value;
+    }
+  }
+
+  for (const field of ["debug", "exposeResources"]) {
+    const value = optionalBooleanField(serverId, server, field);
+    if (value !== undefined) {
+      normalized[field] = value;
+    }
+  }
+
+  return normalized;
 }
 
 export function parseMcpCatalogText(json: string): McpCatalog {
@@ -78,7 +284,7 @@ export function parseMcpCatalogText(json: string): McpCatalog {
   const mcpServers: McpCatalog["mcpServers"] = {};
   for (const [serverId, server] of Object.entries(parsed.mcpServers)) {
     assertServerEntry(serverId, server);
-    mcpServers[serverId] = server;
+    mcpServers[serverId] = normalizeServerEntry(serverId, server);
   }
 
   return {

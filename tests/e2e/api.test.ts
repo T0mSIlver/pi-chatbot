@@ -286,13 +286,16 @@ test.describe("Chat API Integration", () => {
               fake: {
                 command: "node",
                 args: ["-e", "process.exit(0)"],
+                env: { ATHLETE_ID: 870_422 },
               },
             },
           }),
         },
       });
       expect(catalogResponse.status()).toBe(200);
-      expect(JSON.stringify(await catalogResponse.json())).toContain("fake");
+      const catalogBody = await catalogResponse.json();
+      expect(JSON.stringify(catalogBody)).toContain("fake");
+      expect(catalogBody.json).toContain('"ATHLETE_ID": "870422"');
 
       const projectToggle = await page.request.patch(
         `/api/projects/${project.id}/mcp`,
