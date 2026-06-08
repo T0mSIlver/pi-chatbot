@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, desc, eq, gt, lt, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull, lt, type SQL } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import type { ArtifactKind } from "@/components/chat/artifact";
@@ -19,9 +19,12 @@ import { ChatbotError } from "../errors";
 import {
   type Chat,
   chat,
+  chatMcpServerOverride,
   type DBMessage,
   type Document,
+  mcpConfig,
   project,
+  projectMcpServer,
   type Suggestion,
   type User,
   user,
@@ -31,6 +34,7 @@ import { generateHashedPassword } from "./utils";
 
 const client = postgres(process.env.POSTGRES_URL ?? "");
 const db = drizzle(client);
+const DEFAULT_MCP_CONFIG_JSON = '{\n  "mcpServers": {}\n}';
 
 export async function getUser(email: string): Promise<User[]> {
   try {
@@ -276,7 +280,7 @@ export async function saveChat({
 }: {
   id: string;
   userId: string;
-  projectId: string;
+  projectId: string | null;
   title: string;
   summary?: string | null;
   workspacePath: string;
@@ -496,6 +500,89 @@ export async function getChatsByProjectId({
   }
 }
 
+export async function getStandaloneChatsByUserId({
+  userId,
+  limit,
+  startingAfter,
+  endingBefore,
+}: {
+  userId: string;
+  limit: number;
+  startingAfter: string | null;
+  endingBefore: string | null;
+}) {
+  try {
+    const extendedLimit = limit + 1;
+
+    const query = (whereCondition?: SQL<unknown>) =>
+      db
+        .select()
+        .from(chat)
+        .where(
+          whereCondition
+            ? and(
+                whereCondition,
+                eq(chat.userId, userId),
+                isNull(chat.projectId)
+              )
+            : and(eq(chat.userId, userId), isNull(chat.projectId))
+        )
+        .orderBy(desc(chat.createdAt))
+        .limit(extendedLimit);
+
+    let filteredChats: Chat[] = [];
+
+    if (startingAfter) {
+      const [selectedChat] = await db
+        .select()
+        .from(chat)
+        .where(eq(chat.id, startingAfter))
+        .limit(1);
+
+      if (!selectedChat) {
+        throw new ChatbotError(
+          "not_found:database",
+          `Chat with id ${startingAfter} not found`
+        );
+      }
+
+      filteredChats = await query(gt(chat.createdAt, selectedChat.createdAt));
+    } else if (endingBefore) {
+      const [selectedChat] = await db
+        .select()
+        .from(chat)
+        .where(eq(chat.id, endingBefore))
+        .limit(1);
+
+      if (!selectedChat) {
+        throw new ChatbotError(
+          "not_found:database",
+          `Chat with id ${endingBefore} not found`
+        );
+      }
+
+      filteredChats = await query(lt(chat.createdAt, selectedChat.createdAt));
+    } else {
+      filteredChats = await query();
+    }
+
+    const hasMore = filteredChats.length > limit;
+
+    return {
+      chats: hasMore ? filteredChats.slice(0, limit) : filteredChats,
+      hasMore,
+    };
+  } catch (_error) {
+    if (_error instanceof ChatbotError) {
+      throw _error;
+    }
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to get standalone chats by user id"
+    );
+  }
+}
+
 export async function getChatsByUserId({
   id,
   projectId,
@@ -678,6 +765,195 @@ export async function updateChatPiSessionFilePathById({
       .where(eq(chat.id, chatId));
   } catch (_error) {
     return;
+  }
+}
+
+export async function getMcpConfigByUserId({ userId }: { userId: string }) {
+  try {
+    const [config] = await db
+      .select()
+      .from(mcpConfig)
+      .where(eq(mcpConfig.userId, userId))
+      .limit(1);
+
+    return config ?? null;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to get MCP config by user id"
+    );
+  }
+}
+
+export async function ensureMcpConfigByUserId({ userId }: { userId: string }) {
+  try {
+    const now = new Date();
+    const [config] = await db
+      .insert(mcpConfig)
+      .values({
+        userId,
+        json: DEFAULT_MCP_CONFIG_JSON,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: mcpConfig.userId,
+        set: { updatedAt: now },
+      })
+      .returning();
+
+    if (!config) {
+      throw new Error("MCP config upsert returned no rows");
+    }
+
+    return config;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to ensure MCP config by user id"
+    );
+  }
+}
+
+export async function upsertMcpConfigByUserId({
+  userId,
+  json,
+}: {
+  userId: string;
+  json: string;
+}) {
+  try {
+    const now = new Date();
+    const [config] = await db
+      .insert(mcpConfig)
+      .values({
+        userId,
+        json,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: mcpConfig.userId,
+        set: { json, updatedAt: now },
+      })
+      .returning();
+
+    return config ?? null;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to update MCP config by user id"
+    );
+  }
+}
+
+export async function getProjectMcpServers({
+  projectId,
+}: {
+  projectId: string;
+}) {
+  try {
+    return await db
+      .select()
+      .from(projectMcpServer)
+      .where(eq(projectMcpServer.projectId, projectId))
+      .orderBy(asc(projectMcpServer.serverId));
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to get project MCP servers"
+    );
+  }
+}
+
+export async function setProjectMcpServers({
+  projectId,
+  servers,
+}: {
+  projectId: string;
+  servers: Array<{ serverId: string; enabled: boolean }>;
+}) {
+  try {
+    await db
+      .delete(projectMcpServer)
+      .where(eq(projectMcpServer.projectId, projectId));
+
+    if (servers.length > 0) {
+      const now = new Date();
+      await db.insert(projectMcpServer).values(
+        servers.map((server) => ({
+          projectId,
+          serverId: server.serverId,
+          enabled: server.enabled,
+          createdAt: now,
+          updatedAt: now,
+        }))
+      );
+    }
+
+    return getProjectMcpServers({ projectId });
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to set project MCP servers"
+    );
+  }
+}
+
+export async function getChatMcpServerOverrides({
+  chatId,
+}: {
+  chatId: string;
+}) {
+  try {
+    return await db
+      .select()
+      .from(chatMcpServerOverride)
+      .where(eq(chatMcpServerOverride.chatId, chatId))
+      .orderBy(asc(chatMcpServerOverride.serverId));
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to get chat MCP server overrides"
+    );
+  }
+}
+
+export async function setChatMcpServerOverrides({
+  chatId,
+  overrides,
+}: {
+  chatId: string;
+  overrides: Array<{ serverId: string; state: string }>;
+}) {
+  try {
+    await db
+      .delete(chatMcpServerOverride)
+      .where(eq(chatMcpServerOverride.chatId, chatId));
+
+    const persisted = overrides.filter(
+      (override) => override.state !== "inherit"
+    );
+
+    if (persisted.length > 0) {
+      const now = new Date();
+      await db.insert(chatMcpServerOverride).values(
+        persisted.map((override) => ({
+          chatId,
+          serverId: override.serverId,
+          state: override.state,
+          createdAt: now,
+          updatedAt: now,
+        }))
+      );
+    }
+
+    return getChatMcpServerOverrides({ chatId });
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to set chat MCP server overrides"
+    );
   }
 }
 

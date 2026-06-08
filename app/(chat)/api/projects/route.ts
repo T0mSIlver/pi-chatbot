@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { auth } from "@/app/(auth)/auth";
 import {
-  ensureLocalNetworkProject,
   ensureLocalNetworkUser,
+  getProjectsByUserId,
   saveProject,
 } from "@/lib/db/queries";
 import { ChatbotError } from "@/lib/errors";
@@ -23,9 +23,10 @@ export async function GET() {
     return new ChatbotError("unauthorized:chat").toResponse();
   }
 
-  const project = await ensureLocalNetworkProject();
+  const localUser = await ensureLocalNetworkUser();
+  const projects = await getProjectsByUserId({ userId: localUser.id });
 
-  return Response.json({ projects: [project] });
+  return Response.json({ projects });
 }
 
 export async function POST(request: Request) {

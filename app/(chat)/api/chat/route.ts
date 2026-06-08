@@ -7,7 +7,7 @@ import { allowedModelIds, DEFAULT_CHAT_MODEL } from "@/lib/ai/models";
 import { isTestEnvironment } from "@/lib/constants";
 import {
   deleteChatById,
-  ensureLocalNetworkProject,
+  ensureLocalNetworkUser,
   getChatById,
   getProjectById,
   saveChat,
@@ -183,7 +183,7 @@ function getAssistantToolCallBlock(event: unknown) {
   };
 }
 
-async function getOrCreateProject(requestedProjectId?: string) {
+async function resolveNewChatScope(requestedProjectId?: string) {
   if (requestedProjectId) {
     const project = await getProjectById({ id: requestedProjectId });
     if (!project) {
@@ -193,10 +193,17 @@ async function getOrCreateProject(requestedProjectId?: string) {
       userId: project.userId,
       projectId: project.id,
     });
-    return project;
+    return {
+      userId: project.userId,
+      projectId: project.id,
+    };
   }
 
-  return ensureLocalNetworkProject();
+  const localUser = await ensureLocalNetworkUser();
+  return {
+    userId: localUser.id,
+    projectId: null,
+  };
 }
 
 async function imagePartToPiImage(part: { url: string; mediaType: string }) {
@@ -267,7 +274,7 @@ function createConversationMetadata({
 }: {
   id: string;
   userId: string;
-  projectId: string;
+  projectId: string | null;
   title: string;
   piSessionFilePath: string;
 }) {
@@ -431,15 +438,19 @@ async function runMockPiTurn({
   const mockAppPath = path.join(chat.workspacePath, "apps", "mock");
   const mockSharedPath = roots.sharedPath;
   await mkdir(mockAppPath, { recursive: true });
-  await mkdir(mockSharedPath, { recursive: true });
+  if (mockSharedPath) {
+    await mkdir(mockSharedPath, { recursive: true });
+  }
   await writeFile(
     mockMarkdownPath,
     `# Mock workspace output\n\nCreated for ${chat.title} at ${timestamp}.\n`
   );
-  await writeFile(
-    path.join(mockSharedPath, "shared-note.txt"),
-    `Shared workspace note for ${chat.title}.\n`
-  );
+  if (mockSharedPath) {
+    await writeFile(
+      path.join(mockSharedPath, "shared-note.txt"),
+      `Shared workspace note for ${chat.title}.\n`
+    );
+  }
   await writeFile(
     path.join(mockAppPath, "index.html"),
     [
@@ -528,10 +539,10 @@ async function producePiChatRun({
   const initialTitle = createInitialConversationTitle(requestBody.message);
 
   if (!chat) {
-    const project = await getOrCreateProject(requestBody.projectId);
+    const scope = await resolveNewChatScope(requestBody.projectId);
     const workspace = await ensureConversationWorkspace({
-      userId: project.userId,
-      projectId: project.id,
+      userId: scope.userId,
+      projectId: scope.projectId,
       conversationId: requestBody.id,
     });
 
@@ -540,8 +551,8 @@ async function producePiChatRun({
     if (isTestEnvironment) {
       chat = await createConversationMetadata({
         id: requestBody.id,
-        userId: project.userId,
-        projectId: project.id,
+        userId: scope.userId,
+        projectId: scope.projectId,
         title: initialTitle,
         piSessionFilePath: path.join(
           workspace.conversationPath,
@@ -549,20 +560,13 @@ async function producePiChatRun({
         ),
       });
     } else {
-      const piSession = await createPiSdkSession({
-        workspacePath: workspace.conversationPath,
-        sharedPath: workspace.sharedPath,
-        chatId: requestBody.id,
-        selectedModelId: selectedChatModel,
-      });
       chat = await createConversationMetadata({
         id: requestBody.id,
-        userId: project.userId,
-        projectId: project.id,
+        userId: scope.userId,
+        projectId: scope.projectId,
         title: initialTitle,
-        piSessionFilePath: piSession.sessionFile ?? "",
+        piSessionFilePath: "",
       });
-      piSession.dispose();
     }
   }
 
@@ -630,6 +634,7 @@ async function producePiChatRun({
     piSession = await createPiSdkSession({
       workspacePath: chat.workspacePath,
       sharedPath: workspaceRoots.sharedPath,
+      chat,
       chatId: chat.id,
       sessionFilePath: chat.piSessionFilePath,
       selectedModelId: selectedChatModel,

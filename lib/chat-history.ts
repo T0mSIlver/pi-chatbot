@@ -16,10 +16,12 @@ export function getChatHistoryPaginationKey(
     return null;
   }
 
-  const projectParam = projectId ? `&projectId=${projectId}` : "";
+  const scopeParam = projectId
+    ? `&projectId=${projectId}`
+    : "&scope=standalone";
 
   if (pageIndex === 0) {
-    return `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/history?limit=${PAGE_SIZE}${projectParam}`;
+    return `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/history?limit=${PAGE_SIZE}${scopeParam}`;
   }
 
   const firstChatFromPage = previousPageData.chats.at(-1);
@@ -28,5 +30,5 @@ export function getChatHistoryPaginationKey(
     return null;
   }
 
-  return `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/history?ending_before=${firstChatFromPage.id}&limit=${PAGE_SIZE}${projectParam}`;
+  return `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/history?ending_before=${firstChatFromPage.id}&limit=${PAGE_SIZE}${scopeParam}`;
 }

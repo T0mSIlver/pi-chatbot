@@ -1,25 +1,12 @@
 import type { NextRequest } from "next/server";
 import { auth } from "@/app/(auth)/auth";
 import {
-  ensureLocalNetworkProject,
-  getAllChats,
+  ensureLocalNetworkUser,
   getChatsByProjectId,
   getProjectById,
+  getStandaloneChatsByUserId,
 } from "@/lib/db/queries";
 import { ChatbotError } from "@/lib/errors";
-
-async function getOrCreateProjectId(requestedProjectId: string | null) {
-  if (requestedProjectId) {
-    const project = await getProjectById({ id: requestedProjectId });
-    if (!project) {
-      throw new ChatbotError("not_found:chat");
-    }
-    return project.id;
-  }
-
-  const project = await ensureLocalNetworkProject();
-  return project.id;
-}
 
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
@@ -31,6 +18,7 @@ export async function GET(request: NextRequest) {
   const startingAfter = searchParams.get("starting_after");
   const endingBefore = searchParams.get("ending_before");
   const requestedProjectId = searchParams.get("projectId");
+  const requestedScope = searchParams.get("scope");
 
   if (startingAfter && endingBefore) {
     return new ChatbotError(
@@ -45,30 +33,41 @@ export async function GET(request: NextRequest) {
     return new ChatbotError("unauthorized:chat").toResponse();
   }
 
-  let projectId: string;
-  try {
-    projectId = await getOrCreateProjectId(requestedProjectId);
-  } catch (error) {
-    if (error instanceof ChatbotError) {
-      return error.toResponse();
+  const localUser = await ensureLocalNetworkUser();
+
+  if (requestedProjectId) {
+    const project = await getProjectById({ id: requestedProjectId });
+
+    if (!project || project.userId !== localUser.id) {
+      return new ChatbotError("not_found:chat").toResponse();
     }
-    throw error;
+
+    const chats = await getChatsByProjectId({
+      projectId: project.id,
+      limit,
+      startingAfter,
+      endingBefore,
+    });
+
+    return Response.json({
+      ...chats,
+      projectId: project.id,
+      scope: "project",
+    });
   }
 
-  const chats = requestedProjectId
-    ? await getChatsByProjectId({
-        projectId,
-        limit,
-        startingAfter,
-        endingBefore,
-      })
-    : await getAllChats({
-        limit,
-        startingAfter,
-        endingBefore,
-      });
+  if (requestedScope && requestedScope !== "standalone") {
+    return new ChatbotError("bad_request:api").toResponse();
+  }
 
-  return Response.json({ ...chats, projectId });
+  const chats = await getStandaloneChatsByUserId({
+    userId: localUser.id,
+    limit,
+    startingAfter,
+    endingBefore,
+  });
+
+  return Response.json({ ...chats, projectId: null, scope: "standalone" });
 }
 
 export function DELETE() {

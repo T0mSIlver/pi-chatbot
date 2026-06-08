@@ -32,6 +32,7 @@ const MANIFEST_FILE = "manifest.json";
 const INTERNAL_METADATA_DIR = ".pi-chatbot";
 const INTERNAL_FILE_NAMES = new Set([
   INTERNAL_METADATA_DIR,
+  ".pi",
   "pi-session.jsonl",
 ]);
 const CONVERSATION_INTERNAL_NAMES = new Set([
@@ -202,6 +203,11 @@ function targetPath({
 }) {
   const basePath =
     scope === "shared" ? roots.sharedPath : roots.conversationPath;
+
+  if (!basePath) {
+    throw new Error("Shared workspace is not available for this chat");
+  }
+
   const resolvedPath = path.resolve(basePath, filePath);
   assertUnderBase(resolvedPath, basePath);
   return resolvedPath;
@@ -289,20 +295,27 @@ async function captureRoot({
 async function captureWorkspaceFiles(roots: WorkspaceRoots) {
   const files: CapturedWorkspaceFile[] = [];
 
-  await Promise.all([
+  const tasks = [
     captureRoot({
       basePath: roots.conversationPath,
       relativePath: "",
       scope: "conversation",
       files,
     }),
-    captureRoot({
-      basePath: roots.sharedPath,
-      relativePath: "",
-      scope: "shared",
-      files,
-    }),
-  ]);
+  ];
+
+  if (roots.sharedPath) {
+    tasks.push(
+      captureRoot({
+        basePath: roots.sharedPath,
+        relativePath: "",
+        scope: "shared",
+        files,
+      })
+    );
+  }
+
+  await Promise.all(tasks);
 
   return files;
 }
@@ -548,16 +561,23 @@ export async function restoreWorkspaceCheckpoint({
     );
   }
 
-  await Promise.all([
+  const cleanupTasks = [
     removeEmptyDirectories({
       basePath: targetRoots.conversationPath,
       scope: "conversation",
     }),
-    removeEmptyDirectories({
-      basePath: targetRoots.sharedPath,
-      scope: "shared",
-    }),
-  ]);
+  ];
+
+  if (targetRoots.sharedPath) {
+    cleanupTasks.push(
+      removeEmptyDirectories({
+        basePath: targetRoots.sharedPath,
+        scope: "shared",
+      })
+    );
+  }
+
+  await Promise.all(cleanupTasks);
 
   return plan;
 }

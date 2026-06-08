@@ -9,7 +9,7 @@ test.describe("Chat Page", () => {
   test("project selector is visible", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("project-selector")).toBeVisible();
-    await expect(page.getByText("All conversations")).toBeVisible();
+    await expect(page.getByText("Standalone")).toBeVisible();
   });
 
   test("mobile history pane scrolls without idle loading spinner", async ({
@@ -315,13 +315,9 @@ test.describe("Chat Page", () => {
     await page.getByTestId("multimodal-input").fill("Hello");
     await page.getByTestId("send-button").click();
 
-    // Stop button should appear during generation
     const stopButton = page.getByTestId("stop-button");
-    // If generation starts, stop button appears
-    // This is a best-effort check since timing depends on API
-    await stopButton.click({ timeout: 5000 }).catch(() => {
-      // Generation may have finished before we could click
-    });
+    await stopButton.click({ timeout: 5000 }).catch(() => undefined);
+    await expect(stopButton).toBeHidden({ timeout: 30_000 });
   });
 });
 
@@ -332,8 +328,10 @@ test.describe("Chat Input Features", () => {
     await input.fill("Test message");
     await page.getByTestId("send-button").click();
 
-    // Input should clear after sending
     await expect(input).toHaveValue("");
+    await expect(page.getByText("This is a mocked Pi response")).toBeVisible({
+      timeout: 30_000,
+    });
   });
 
   test("sidebar updates with generated title without refresh", async ({

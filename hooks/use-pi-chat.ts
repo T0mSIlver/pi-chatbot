@@ -126,7 +126,7 @@ export function usePiChat() {
   const pathname = usePathname();
   const router = useRouter();
   const { mutate } = useSWRConfig();
-  const { setSelectedProjectId } = useProjects();
+  const { selectedProjectId, setSelectedProjectId } = useProjects();
 
   const chatIdFromUrl = extractChatId(pathname);
   const isNewChat = !chatIdFromUrl;
@@ -179,6 +179,9 @@ export function usePiChat() {
     fetcher,
     { revalidateOnFocus: false }
   );
+  const hydratedMessages = chatData?.messages;
+  const hydratedProjectId = chatData?.projectId ?? null;
+  const hasHydratedChatData = Boolean(chatData);
 
   const updateChatRuntimeState = useCallback(
     (
@@ -235,20 +238,21 @@ export function usePiChat() {
     // we haven't loaded yet. Once loaded (or after streaming a live turn),
     // the in-memory messages are the source of truth and must not be
     // overwritten by stale SWR data.
-    if (chatData?.messages && !loadedChatIdsRef.current.has(chatId)) {
+    if (hydratedMessages && !loadedChatIdsRef.current.has(chatId)) {
       updateChatRuntimeState(chatId, () => ({
         ...createEmptyRuntimeState(),
-        messages: chatData.messages,
+        messages: hydratedMessages,
       }));
       setPendingEdit(null);
       loadedChatIdsRef.current.add(chatId);
     }
-    if (chatData?.projectId) {
-      setSelectedProjectId(chatData.projectId);
+    if (!isNewChat && hasHydratedChatData) {
+      setSelectedProjectId(hydratedProjectId);
     }
   }, [
-    chatData?.messages,
-    chatData?.projectId,
+    hasHydratedChatData,
+    hydratedMessages,
+    hydratedProjectId,
     chatId,
     isNewChat,
     setSelectedProjectId,
@@ -258,11 +262,15 @@ export function usePiChat() {
   const refreshHistory = useCallback(() => {
     mutate(
       unstable_serialize((pageIndex: number, previousPageData: ChatHistory) =>
-        getChatHistoryPaginationKey(pageIndex, previousPageData)
+        getChatHistoryPaginationKey(
+          pageIndex,
+          previousPageData,
+          selectedProjectId
+        )
       )
     );
     mutate((key) => typeof key === "string" && key.includes("/api/history"));
-  }, [mutate]);
+  }, [mutate, selectedProjectId]);
 
   const consumeChatStream = useCallback(
     async ({
@@ -634,6 +642,7 @@ export function usePiChat() {
               id: targetChatId,
               assistantMessageId: assistantMessage.id,
               message: userMessage,
+              projectId: selectedProjectId ?? undefined,
               selectedChatModel: targetModelId,
               branchFromEntryId: editOptions?.branchFromEntryId,
             }),
@@ -697,6 +706,7 @@ export function usePiChat() {
       mutate,
       refreshHistory,
       restoreCurrentWorkspace,
+      selectedProjectId,
       updateChatRuntimeState,
     ]
   );

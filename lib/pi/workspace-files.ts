@@ -25,6 +25,7 @@ import { getProjectSharedWorkspacePath } from "./workspace";
 const INTERNAL_METADATA_DIR = ".pi-chatbot";
 const INTERNAL_FILE_NAMES = new Set([
   INTERNAL_METADATA_DIR,
+  ".pi",
   "pi-session.jsonl",
 ]);
 const CONVERSATION_INTERNAL_NAMES = new Set([
@@ -45,7 +46,7 @@ const WORKSPACE_DISPLAY_MODES = new Set([
 
 export type WorkspaceRoots = {
   conversationPath: string;
-  sharedPath: string;
+  sharedPath?: string;
 };
 
 type WorkspaceFileSnapshotEntry = {
@@ -74,7 +75,9 @@ export type WorkspaceFileRead = {
 export function getWorkspaceRoots(chat: Chat): WorkspaceRoots {
   return {
     conversationPath: chat.workspacePath,
-    sharedPath: getProjectSharedWorkspacePath(chat.userId, chat.projectId),
+    sharedPath: chat.projectId
+      ? getProjectSharedWorkspacePath(chat.userId, chat.projectId)
+      : undefined,
   };
 }
 
@@ -211,6 +214,11 @@ export async function resolveWorkspacePath({
 
   const basePath =
     scope === "shared" ? roots.sharedPath : roots.conversationPath;
+
+  if (!basePath) {
+    throw new Error("Shared workspace is not available for this chat");
+  }
+
   const resolvedPath = path.resolve(basePath, normalized);
   assertUnderBase(resolvedPath, basePath);
 
@@ -426,14 +434,16 @@ export async function buildWorkspaceTree(roots: WorkspaceRoots) {
       relativePath: "",
       scope: "conversation",
     }),
-    buildTreeChildren({
-      basePath: roots.sharedPath,
-      relativePath: "",
-      scope: "shared",
-    }),
+    roots.sharedPath
+      ? buildTreeChildren({
+          basePath: roots.sharedPath,
+          relativePath: "",
+          scope: "shared",
+        })
+      : Promise.resolve([]),
   ]);
 
-  return [
+  const tree: WorkspaceFileNode[] = [
     {
       name: "Conversation",
       path: "",
@@ -441,14 +451,19 @@ export async function buildWorkspaceTree(roots: WorkspaceRoots) {
       kind: "directory" as const,
       children: conversationChildren,
     },
-    {
+  ];
+
+  if (roots.sharedPath) {
+    tree.push({
       name: "Project shared",
       path: "",
       scope: "shared" as const,
       kind: "directory" as const,
       children: sharedChildren,
-    },
-  ];
+    });
+  }
+
+  return tree;
 }
 
 async function hashFile(filePath: string) {
@@ -528,20 +543,27 @@ export async function snapshotWorkspaceFiles(
 ): Promise<WorkspaceSnapshot> {
   const snapshot: WorkspaceSnapshot = new Map();
 
-  await Promise.all([
+  const tasks = [
     snapshotRoot({
       basePath: roots.conversationPath,
       relativePath: "",
       scope: "conversation",
       snapshot,
     }),
-    snapshotRoot({
-      basePath: roots.sharedPath,
-      relativePath: "",
-      scope: "shared",
-      snapshot,
-    }),
-  ]);
+  ];
+
+  if (roots.sharedPath) {
+    tasks.push(
+      snapshotRoot({
+        basePath: roots.sharedPath,
+        relativePath: "",
+        scope: "shared",
+        snapshot,
+      })
+    );
+  }
+
+  await Promise.all(tasks);
 
   return snapshot;
 }

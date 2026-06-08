@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { expect, type Page, test } from "@playwright/test";
 
 const CHAT_URL_REGEX = /\/chat\/[\w-]+/;
@@ -28,6 +29,43 @@ async function sendSlowBackgroundMessage(page: Page, message: string) {
   const chatId = page.url().split("/chat/").at(-1);
   expect(chatId).toBeTruthy();
   return chatId ?? "";
+}
+
+async function createProject(page: Page, name = `API project ${Date.now()}`) {
+  const response = await page.request.post("/api/projects", {
+    data: { name },
+  });
+  expect(response.status()).toBe(201);
+  return ((await response.json()) as { project: { id: string; name: string } })
+    .project;
+}
+
+async function createChatViaApi({
+  page,
+  projectId,
+  text,
+}: {
+  page: Page;
+  projectId?: string;
+  text: string;
+}) {
+  const id = randomUUID();
+  const response = await page.request.post("/api/chat", {
+    data: {
+      id,
+      projectId,
+      selectedChatModel: DEFAULT_TEST_MODEL,
+      message: {
+        id: randomUUID(),
+        role: "user",
+        parts: [{ type: "text", text }],
+      },
+    },
+  });
+
+  expect(response.status()).toBe(200);
+  await response.text();
+  return id;
 }
 
 test.describe("Chat API Integration", () => {
@@ -179,6 +217,118 @@ test.describe("Chat API Integration", () => {
       }
       await firstContext.close();
       await secondContext.close();
+    }
+  });
+
+  test("separates standalone and project chat history", async ({ page }) => {
+    await gotoHomeWithProject(page);
+    const standaloneText = `Standalone API chat ${Date.now()}`;
+    const standaloneChatId = await createChatViaApi({
+      page,
+      text: standaloneText,
+    });
+    const project = await createProject(page);
+    const projectText = `Project API chat ${Date.now()}`;
+    const projectChatId = await createChatViaApi({
+      page,
+      projectId: project.id,
+      text: projectText,
+    });
+
+    try {
+      const standaloneMessages = await page.request.get(
+        `/api/messages?chatId=${standaloneChatId}`
+      );
+      expect(standaloneMessages.status()).toBe(200);
+      expect((await standaloneMessages.json()).projectId).toBeNull();
+
+      const standaloneHistory = await page.request.get(
+        "/api/history?limit=20&scope=standalone"
+      );
+      expect(standaloneHistory.status()).toBe(200);
+      const standaloneHistoryText = JSON.stringify(
+        await standaloneHistory.json()
+      );
+      expect(standaloneHistoryText).toContain(standaloneChatId);
+      expect(standaloneHistoryText).not.toContain(projectChatId);
+
+      const projectHistory = await page.request.get(
+        `/api/history?limit=20&projectId=${project.id}`
+      );
+      expect(projectHistory.status()).toBe(200);
+      const projectHistoryText = JSON.stringify(await projectHistory.json());
+      expect(projectHistoryText).toContain(projectChatId);
+      expect(projectHistoryText).not.toContain(standaloneChatId);
+    } finally {
+      await page.request.delete(`/api/chat?id=${standaloneChatId}`);
+      await page.request.delete(`/api/chat?id=${projectChatId}`);
+      await page.request.delete(`/api/projects/${project.id}`);
+    }
+  });
+
+  test("saves MCP catalog and applies project/chat inheritance", async ({
+    page,
+  }) => {
+    await gotoHomeWithProject(page);
+    const project = await createProject(page);
+    const chatId = await createChatViaApi({
+      page,
+      projectId: project.id,
+      text: `MCP toggle chat ${Date.now()}`,
+    });
+
+    try {
+      const catalogResponse = await page.request.patch("/api/mcp/config", {
+        data: {
+          json: JSON.stringify({
+            settings: { idleTimeout: 3 },
+            mcpServers: {
+              fake: {
+                command: "node",
+                args: ["-e", "process.exit(0)"],
+              },
+            },
+          }),
+        },
+      });
+      expect(catalogResponse.status()).toBe(200);
+      expect(JSON.stringify(await catalogResponse.json())).toContain("fake");
+
+      const projectToggle = await page.request.patch(
+        `/api/projects/${project.id}/mcp`,
+        { data: { servers: { fake: true } } }
+      );
+      expect(projectToggle.status()).toBe(200);
+      expect((await projectToggle.json()).servers[0]).toMatchObject({
+        id: "fake",
+        enabled: true,
+      });
+
+      const inheritedChat = await page.request.get(`/api/chat/${chatId}/mcp`);
+      expect(inheritedChat.status()).toBe(200);
+      expect((await inheritedChat.json()).servers[0]).toMatchObject({
+        id: "fake",
+        defaultEnabled: true,
+        effectiveEnabled: true,
+        override: "inherit",
+      });
+
+      const disabledChat = await page.request.patch(`/api/chat/${chatId}/mcp`, {
+        data: { overrides: { fake: "disabled" } },
+      });
+      expect(disabledChat.status()).toBe(200);
+      expect((await disabledChat.json()).servers[0]).toMatchObject({
+        id: "fake",
+        defaultEnabled: true,
+        effectiveEnabled: false,
+        override: "disabled",
+      });
+    } finally {
+      await page.request.delete(`/api/chat?id=${chatId}`);
+      await page.request.delete(`/api/projects/${project.id}`);
+      await page.request.patch("/api/mcp/config", {
+        data: { json: JSON.stringify({ mcpServers: {} }) },
+      });
     }
   });
 

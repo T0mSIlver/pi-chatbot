@@ -2,17 +2,65 @@ import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 
 const CHAT_URL_REGEX = /\/chat\/[\w-]+/;
+const SELECTED_PROJECT_STORAGE_KEY = "selected-project-id:local-network";
 
-async function createMockWorkspaceTurn(page: import("@playwright/test").Page) {
-  const projectsResponse = page.waitForResponse(
-    (response) =>
-      response.url().includes("/api/projects") && response.status() === 200
-  );
+async function prepareScope({
+  page,
+  projectScope,
+}: {
+  page: import("@playwright/test").Page;
+  projectScope: boolean;
+}) {
   await page.goto("/");
-  await projectsResponse;
   await expect(page.getByTestId("project-selector")).not.toContainText(
     "Loading...",
     { timeout: 30_000 }
+  );
+
+  if (!projectScope) {
+    await page.evaluate((storageKey) => {
+      window.localStorage.setItem(storageKey, "standalone");
+    }, SELECTED_PROJECT_STORAGE_KEY);
+    await page.reload();
+    await expect(page.getByTestId("project-selector")).toContainText(
+      "Standalone"
+    );
+    return "Standalone";
+  }
+
+  const name = `Workspace project ${Date.now()}-${randomUUID().slice(0, 8)}`;
+  const response = await page.request.post("/api/projects", {
+    data: { name },
+  });
+  expect(response.status()).toBe(201);
+  const body = (await response.json()) as {
+    project: { id: string; name: string };
+  };
+
+  await page.evaluate(
+    ({ projectId, storageKey }) => {
+      window.localStorage.setItem(storageKey, projectId);
+    },
+    {
+      projectId: body.project.id,
+      storageKey: SELECTED_PROJECT_STORAGE_KEY,
+    }
+  );
+  await page.reload();
+  await expect(page.getByTestId("project-selector")).toContainText(
+    body.project.name
+  );
+
+  return body.project.name;
+}
+
+async function createMockWorkspaceTurn(
+  page: import("@playwright/test").Page,
+  { projectScope = true }: { projectScope?: boolean } = {}
+) {
+  const selectedScopeName = await prepareScope({ page, projectScope });
+  await expect(page.getByTestId("project-selector")).toContainText(
+    selectedScopeName
   );
   await page.getByTestId("multimodal-input").fill("Create workspace files");
   await page.getByTestId("send-button").click();
@@ -87,6 +135,22 @@ test.describe("Workspace file workbench", () => {
 });
 
 test.describe("Workspace file APIs", () => {
+  test("standalone chats do not expose a shared workspace", async ({
+    page,
+  }) => {
+    const chatId = await createMockWorkspaceTurn(page, { projectScope: false });
+
+    const sharedFile = await page.request.get(
+      `/api/workspace/file?chatId=${chatId}&scope=shared&path=shared-note.txt`
+    );
+    expect(sharedFile.status()).toBe(400);
+
+    const tree = await page.request.get(`/api/workspace/tree?chatId=${chatId}`);
+    const treeText = JSON.stringify(await tree.json());
+    expect(treeText).not.toContain("Project shared");
+    expect(treeText).not.toContain("shared-note.txt");
+  });
+
   test("read files and reject unsafe paths", async ({ page }) => {
     const chatId = await createMockWorkspaceTurn(page);
 

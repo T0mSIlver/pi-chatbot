@@ -17,13 +17,14 @@ type ProjectsContextValue = {
   projects: Project[];
   selectedProjectId: string | null;
   selectedProject: Project | null;
-  setSelectedProjectId: (id: string) => void;
+  setSelectedProjectId: (id: string | null) => void;
   refreshProjects: () => void;
   isLoading: boolean;
 };
 
 const ProjectsContext = createContext<ProjectsContextValue | null>(null);
 const SELECTED_PROJECT_STORAGE_KEY = "selected-project-id:local-network";
+const STANDALONE_SCOPE_STORAGE_VALUE = "standalone";
 
 export function ProjectProvider({
   children,
@@ -44,40 +45,44 @@ export function ProjectProvider({
 
   useEffect(() => {
     const stored = window.localStorage.getItem(SELECTED_PROJECT_STORAGE_KEY);
-    if (stored) {
+    if (stored && stored !== STANDALONE_SCOPE_STORAGE_VALUE) {
       setSelectedProjectIdState(stored);
     }
   }, []);
 
   useEffect(() => {
-    if (projects.length === 0) {
+    if (!data) {
       return;
     }
 
-    if (
-      !selectedProjectId ||
-      !projects.some((p) => p.id === selectedProjectId)
-    ) {
-      const nextId = projects[0].id;
-      setSelectedProjectIdState(nextId);
-      window.localStorage.setItem(SELECTED_PROJECT_STORAGE_KEY, nextId);
+    if (!selectedProjectId) {
+      return;
     }
-  }, [projects, selectedProjectId]);
 
-  const setSelectedProjectId = useCallback((id: string) => {
+    if (!projects.some((p) => p.id === selectedProjectId)) {
+      setSelectedProjectIdState(null);
+      window.localStorage.setItem(
+        SELECTED_PROJECT_STORAGE_KEY,
+        STANDALONE_SCOPE_STORAGE_VALUE
+      );
+    }
+  }, [data, projects, selectedProjectId]);
+
+  const setSelectedProjectId = useCallback((id: string | null) => {
     setSelectedProjectIdState(id);
-    window.localStorage.setItem(SELECTED_PROJECT_STORAGE_KEY, id);
+    window.localStorage.setItem(
+      SELECTED_PROJECT_STORAGE_KEY,
+      id ?? STANDALONE_SCOPE_STORAGE_VALUE
+    );
   }, []);
 
   const selectedProject =
-    projects.find((project) => project.id === selectedProjectId) ??
-    projects[0] ??
-    null;
+    projects.find((project) => project.id === selectedProjectId) ?? null;
 
   const value = useMemo<ProjectsContextValue>(
     () => ({
       projects,
-      selectedProjectId: selectedProject?.id ?? selectedProjectId,
+      selectedProjectId: selectedProject?.id ?? null,
       selectedProject,
       setSelectedProjectId,
       refreshProjects: () => {
@@ -85,14 +90,7 @@ export function ProjectProvider({
       },
       isLoading,
     }),
-    [
-      projects,
-      selectedProjectId,
-      selectedProject,
-      mutate,
-      isLoading,
-      setSelectedProjectId,
-    ]
+    [projects, selectedProject, mutate, isLoading, setSelectedProjectId]
   );
 
   return (

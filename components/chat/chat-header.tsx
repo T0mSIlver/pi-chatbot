@@ -1,9 +1,12 @@
 "use client";
 
-import { BracesIcon, FilesIcon, PanelLeftIcon } from "lucide-react";
+import { BracesIcon, FilesIcon, PanelLeftIcon, PlugIcon } from "lucide-react";
+import { usePathname } from "next/navigation";
 import { memo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/ui/sidebar";
+import { useProjects } from "@/hooks/use-projects";
+import { McpSettingsDialog } from "./mcp-settings-dialog";
 import { ProviderCaptureDialog } from "./provider-capture-dialog";
 
 function PureChatHeader({
@@ -17,8 +20,12 @@ function PureChatHeader({
   isWorkbenchOpen: boolean;
   onToggleWorkbench: () => void;
 }) {
+  const pathname = usePathname();
   const { toggleSidebar } = useSidebar();
+  const { selectedProject, selectedProjectId } = useProjects();
   const [showProviderCaptures, setShowProviderCaptures] = useState(false);
+  const [showMcpSettings, setShowMcpSettings] = useState(false);
+  const savedChatId = pathname?.startsWith("/chat/") ? chatId : undefined;
 
   return (
     <>
@@ -33,7 +40,7 @@ function PureChatHeader({
         </Button>
 
         <div className="min-w-0 truncate text-[13px] font-medium text-sidebar-foreground/70">
-          All conversations
+          {selectedProject?.name ?? "Standalone"}
         </div>
         <Button
           aria-label="Inspect OpenAI payload"
@@ -46,6 +53,17 @@ function PureChatHeader({
           variant="ghost"
         >
           <BracesIcon className="size-4" />
+        </Button>
+        <Button
+          aria-label="MCP settings"
+          data-testid="chat-mcp-settings-button"
+          onClick={() => setShowMcpSettings(true)}
+          size="icon-sm"
+          title="MCP settings"
+          type="button"
+          variant="ghost"
+        >
+          <PlugIcon className="size-4" />
         </Button>
         <Button
           aria-label={isWorkbenchOpen ? "Close files" : "Open files"}
@@ -62,6 +80,12 @@ function PureChatHeader({
         chatId={chatId}
         onOpenChange={setShowProviderCaptures}
         open={showProviderCaptures}
+      />
+      <McpSettingsDialog
+        chatId={savedChatId}
+        onOpenChange={setShowMcpSettings}
+        open={showMcpSettings}
+        projectId={selectedProjectId}
       />
     </>
   );

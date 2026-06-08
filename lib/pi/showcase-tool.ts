@@ -32,7 +32,7 @@ export function createShowcaseFileTool({
 }: {
   chatId: string;
   conversationPath: string;
-  sharedPath: string;
+  sharedPath?: string;
 }): ToolDefinition {
   return defineTool({
     name: "showcase_file",

@@ -1,16 +1,21 @@
 import "server-only";
 
+import { createRequire } from "node:module";
 import path from "node:path";
 import {
   createAgentSession,
   DefaultResourceLoader,
   SessionManager,
 } from "@mariozechner/pi-coding-agent";
+import type { Chat } from "@/lib/db/schema";
 import { createFetchWebpageTool } from "./fetch-webpage-tool";
+import { writeMcpConfigForChat } from "./mcp-config";
 import { createPiModelRegistry, findPiModel } from "./model";
 import { withProviderCaptureModel } from "./provider-capture-provider";
 import type { ProviderCaptureContext } from "./provider-captures";
 import { createShowcaseFileTool } from "./showcase-tool";
+
+const require = createRequire(import.meta.url);
 
 /**
  * Skills that ship with this app (committed under `<repo>/skills`). They are
@@ -24,21 +29,37 @@ function getBundledSkillPaths() {
   return [path.join(skillsRoot, "brave-search")];
 }
 
+function getBundledExtensionPaths() {
+  const adapterPackageJson = require.resolve("pi-mcp-adapter/package.json");
+  return [path.dirname(adapterPackageJson)];
+}
+
 export async function createPiSdkSession({
   workspacePath,
   sessionFilePath,
   selectedModelId,
   chatId,
   sharedPath,
+  chat,
   providerCapture,
 }: {
   workspacePath: string;
   sessionFilePath?: string | null;
   selectedModelId?: string;
   chatId: string;
-  sharedPath: string;
+  sharedPath?: string;
+  chat?: Chat;
   providerCapture?: ProviderCaptureContext;
 }) {
+  process.env.MCP_DIRECT_TOOLS = "__none__";
+
+  if (chat) {
+    await writeMcpConfigForChat({
+      chat,
+      conversationPath: workspacePath,
+    });
+  }
+
   const { agentDir, authStorage, modelRegistry } = createPiModelRegistry();
   const model = withProviderCaptureModel(
     findPiModel({ modelRegistry, selectedModelId }),
@@ -52,6 +73,7 @@ export async function createPiSdkSession({
   const resourceLoader = new DefaultResourceLoader({
     cwd: workspacePath,
     agentDir,
+    additionalExtensionPaths: getBundledExtensionPaths(),
     additionalSkillPaths: getBundledSkillPaths(),
   });
   await resourceLoader.reload();

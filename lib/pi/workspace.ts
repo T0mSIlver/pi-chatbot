@@ -29,9 +29,18 @@ export function getConversationWorkspacePath({
   conversationId,
 }: {
   userId: string;
-  projectId: string;
+  projectId: string | null;
   conversationId: string;
 }) {
+  if (!projectId) {
+    return path.join(
+      getUserWorkspaceRoot(userId),
+      "standalone",
+      "conversations",
+      conversationId
+    );
+  }
+
   return path.join(
     getProjectWorkspacePath(userId, projectId),
     "conversations",
@@ -60,10 +69,9 @@ export async function ensureConversationWorkspace({
   conversationId,
 }: {
   userId: string;
-  projectId: string;
+  projectId: string | null;
   conversationId: string;
 }) {
-  const { sharedPath } = await ensureProjectWorkspace({ userId, projectId });
   const conversationPath = getConversationWorkspacePath({
     userId,
     projectId,
@@ -73,6 +81,13 @@ export async function ensureConversationWorkspace({
   await mkdir(conversationPath, { recursive: true });
 
   const sharedLinkPath = path.join(conversationPath, "project-shared");
+
+  if (!projectId) {
+    await rm(sharedLinkPath, { force: true, recursive: true });
+    return { conversationPath, sharedPath: undefined };
+  }
+
+  const { sharedPath } = await ensureProjectWorkspace({ userId, projectId });
 
   try {
     const existingTarget = await readlink(sharedLinkPath);
