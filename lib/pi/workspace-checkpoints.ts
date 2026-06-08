@@ -79,11 +79,17 @@ type PlanWorkspaceRestoreArgs = {
 type RestoreWorkspaceCheckpointArgs = PlanWorkspaceRestoreArgs;
 
 function safeCheckpointId(checkpointId: string) {
-  if (!/^[A-Za-z0-9_-]+$/.test(checkpointId)) {
+  // pi types getLeafId() as `string | null`, but legacy session files can
+  // round-trip an all-digit entry id back as a number (e.g. "00870422" -> 870422).
+  // A bare number slips past the regex (RegExp.test coerces to string) and then
+  // blows up `path.join`, so normalise to a string before validating.
+  const id = String(checkpointId);
+
+  if (!/^[A-Za-z0-9_-]+$/.test(id)) {
     throw new Error("Invalid checkpoint id");
   }
 
-  return checkpointId;
+  return id;
 }
 
 function checkpointRoot(conversationPath: string) {

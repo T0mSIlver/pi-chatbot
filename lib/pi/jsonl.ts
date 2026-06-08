@@ -29,6 +29,19 @@ type SessionMessageEntry = {
   };
 };
 
+// pi types entry ids as strings, but legacy session files can round-trip an
+// all-digit id back as a number (e.g. "00870422" -> 870422). Coerce to strings
+// up front so numeric ids never leak into checkpoint paths or the client (where
+// branchFromEntryId is validated as a string). Returns a shallow copy so the
+// live session-manager entries are left untouched.
+function normalizeEntryIds(entry: SessionMessageEntry): SessionMessageEntry {
+  return {
+    ...entry,
+    id: entry.id == null ? entry.id : String(entry.id),
+    parentId: entry.parentId == null ? entry.parentId : String(entry.parentId),
+  };
+}
+
 function isSessionMessageEntry(value: unknown): value is SessionMessageEntry {
   return (
     typeof value === "object" &&
@@ -256,7 +269,7 @@ export function piEntriesToChatMessages(
 
   for (const entry of entries) {
     if (isSessionMessageEntry(entry)) {
-      convertEntry(entry, messages, chatId);
+      convertEntry(normalizeEntryIds(entry), messages, chatId);
     }
   }
 
