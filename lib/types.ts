@@ -6,9 +6,22 @@ export const messageMetadataSchema = z.object({
   createdAt: z.string(),
   parentId: z.string().nullable().optional(),
   checkpointId: z.string().optional(),
+  providerRequestIndex: z.number().optional(),
+  providerStats: z
+    .object({
+      generatedTokens: z.number().optional(),
+      generationTimeMs: z.number().optional(),
+      generationTokensPerSecond: z.number().optional(),
+      promptTimeMs: z.number().optional(),
+      promptTokens: z.number().optional(),
+      promptTokensPerSecond: z.number().optional(),
+    })
+    .optional(),
 });
 
 export type MessageMetadata = z.infer<typeof messageMetadataSchema>;
+
+export type ProviderTokenStats = NonNullable<MessageMetadata["providerStats"]>;
 
 export type ChatStatus = "ready" | "submitted" | "streaming" | "error";
 

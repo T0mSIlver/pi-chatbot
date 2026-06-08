@@ -20,7 +20,11 @@ import { type ChatRun, startChatRun } from "@/lib/pi/chat-runs";
 import { generateConversationMetadata } from "@/lib/pi/conversation-metadata";
 import { piEntriesToChatMessages } from "@/lib/pi/jsonl";
 import { waitForProviderCaptureWrites } from "@/lib/pi/provider-capture-transport";
-import type { ProviderCaptureCounter } from "@/lib/pi/provider-captures";
+import {
+  type ProviderCaptureCounter,
+  readProviderCaptures,
+} from "@/lib/pi/provider-captures";
+import { applyProviderStatsToMessages } from "@/lib/pi/provider-stats";
 import { createPiSdkSession } from "@/lib/pi/session";
 import {
   ensureConversationWorkspace,
@@ -849,13 +853,15 @@ async function producePiChatRun({
 
     await waitForProviderCaptureWrites(providerCaptureWrites);
 
+    const finalMessages = applyProviderStatsToMessages(
+      piEntriesToChatMessages(piSession.sessionManager.getBranch(), chat.id),
+      await readProviderCaptures(chat.workspacePath)
+    );
+
     run.emit({
       type: "done",
       sessionFilePath: piSession.sessionFile,
-      messages: piEntriesToChatMessages(
-        piSession.sessionManager.getBranch(),
-        chat.id
-      ),
+      messages: finalMessages,
     });
   } catch (error) {
     if (run.isStopRequested) {

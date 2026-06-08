@@ -16,6 +16,7 @@ import { MessageActions } from "./message-actions";
 import { MessageReasoning } from "./message-reasoning";
 import { renderPiToolSpecializedAction } from "./pi-tool-specializations";
 import { PreviewAttachment } from "./preview-attachment";
+import { ProviderStatsToggle } from "./provider-stats-toggle";
 
 const PurePreviewMessage = ({
   chatId,
@@ -148,6 +149,7 @@ const PurePreviewMessage = ({
       message={message}
     />
   );
+  const stats = message.metadata?.providerStats;
 
   const content = isThinking ? (
     <div className="flex h-[calc(13px*1.65)] items-center text-[13px] leading-[1.65]">
@@ -185,7 +187,10 @@ const PurePreviewMessage = ({
           </div>
         )}
         {isAssistant ? (
-          <div className="flex min-w-0 flex-1 flex-col gap-1.5">{content}</div>
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+            {content}
+            {stats && !isThinking && <ProviderStatsToggle stats={stats} />}
+          </div>
         ) : (
           content
         )}

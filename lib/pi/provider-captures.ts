@@ -2,6 +2,8 @@ import "server-only";
 
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import type { ProviderTokenStats } from "@/lib/types";
+import { extractProviderStatsFromResponse } from "./provider-stats";
 
 const INTERNAL_METADATA_DIR = ".pi-chatbot";
 const CAPTURES_FILE_NAME = "provider-captures.jsonl";
@@ -46,6 +48,7 @@ export type ProviderCaptureRecord = {
     body?: unknown;
     bodyReadError?: string;
   };
+  stats?: ProviderTokenStats;
   error?: {
     name?: string;
     message: string;
@@ -155,7 +158,12 @@ export async function readProviderCaptures(conversationPath: string) {
           return null;
         }
       })
-      .filter(isProviderCaptureRecord);
+      .filter(isProviderCaptureRecord)
+      .map((record) => ({
+        ...record,
+        stats:
+          record.stats ?? extractProviderStatsFromResponse(record.response),
+      }));
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return [];

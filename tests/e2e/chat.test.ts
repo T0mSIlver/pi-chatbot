@@ -154,6 +154,14 @@ test.describe("Chat Page", () => {
         rawBody:
           'data: {"choices":[{"delta":{"content":"Captured response"}}]}\n',
       },
+      stats: {
+        generatedTokens: 48,
+        generationTimeMs: 1200,
+        generationTokensPerSecond: 40,
+        promptTimeMs: 250,
+        promptTokens: 100,
+        promptTokensPerSecond: 400,
+      },
     };
 
     await page.context().addCookies([
@@ -220,11 +228,66 @@ test.describe("Chat Page", () => {
     await expect(page.getByTestId("provider-capture-json")).toContainText(
       '"role": "user"'
     );
+    await expect(page.getByTestId("provider-stats")).toContainText("100 tok");
 
     await page.getByTestId("provider-capture-response-tab").click();
     await expect(page.getByTestId("provider-capture-json")).toContainText(
       "Captured response"
     );
+    await page.getByTestId("provider-stats-generation").click();
+    await expect(page.getByTestId("provider-stats")).toContainText("48 tok");
+  });
+
+  test("shows provider stats below assistant messages", async ({ page }) => {
+    const timestamp = new Date().toISOString();
+    const chatId = "00000000-0000-4000-8000-000000000201";
+
+    await page.route("**/api/messages**", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.searchParams.get("chatId") !== chatId) {
+        await route.continue();
+        return;
+      }
+
+      await route.fulfill({
+        json: {
+          isReadonly: false,
+          messages: [
+            {
+              id: "user-message",
+              metadata: { createdAt: timestamp },
+              parts: [{ type: "text", text: "Show stats" }],
+              role: "user",
+            },
+            {
+              id: "assistant-message",
+              metadata: {
+                createdAt: timestamp,
+                providerStats: {
+                  generatedTokens: 64,
+                  generationTimeMs: 2000,
+                  generationTokensPerSecond: 32,
+                  promptTimeMs: 400,
+                  promptTokens: 128,
+                  promptTokensPerSecond: 320,
+                },
+              },
+              parts: [{ type: "text", text: "Stats are visible." }],
+              role: "assistant",
+            },
+          ],
+          projectId: "00000000-0000-4000-8000-000000000202",
+          userId: "00000000-0000-4000-8000-000000000203",
+        },
+      });
+    });
+
+    await page.goto(`/chat/${chatId}`);
+
+    const stats = page.getByTestId("provider-stats");
+    await expect(stats).toContainText("128 tok");
+    await page.getByTestId("provider-stats-generation").click();
+    await expect(stats).toContainText("64 tok");
   });
 
   test("can type in the input field", async ({ page }) => {

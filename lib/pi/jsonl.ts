@@ -5,6 +5,8 @@ import { SessionManager } from "@mariozechner/pi-coding-agent";
 import { formatISO } from "date-fns";
 import type { ChatMessage, ChatMessagePart, PiToolUIPart } from "@/lib/types";
 import { generateUUID } from "@/lib/utils";
+import { readProviderCaptures } from "./provider-captures";
+import { applyProviderStatsToMessages } from "./provider-stats";
 import { ROOT_WORKSPACE_CHECKPOINT_ID } from "./workspace-checkpoints";
 import {
   displayIntentFromShowcaseToolInput,
@@ -276,7 +278,16 @@ export async function readPiSessionMessages(
       undefined,
       workspacePath ?? undefined
     );
-    return piEntriesToChatMessages(sessionManager.getBranch(), chatId);
+    const messages = piEntriesToChatMessages(
+      sessionManager.getBranch(),
+      chatId
+    );
+    return workspacePath
+      ? applyProviderStatsToMessages(
+          messages,
+          await readProviderCaptures(workspacePath)
+        )
+      : messages;
   } catch {
     try {
       const content = await readFile(sessionFilePath, "utf8");
@@ -292,7 +303,13 @@ export async function readPiSessionMessages(
         })
         .filter(Boolean);
 
-      return piEntriesToChatMessages(entries, chatId);
+      const messages = piEntriesToChatMessages(entries, chatId);
+      return workspacePath
+        ? applyProviderStatsToMessages(
+            messages,
+            await readProviderCaptures(workspacePath)
+          )
+        : messages;
     } catch {
       return [];
     }

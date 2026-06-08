@@ -11,6 +11,7 @@ import {
   sanitizeHeaders,
   serializeCaptureError,
 } from "./provider-captures";
+import { extractProviderStatsFromResponse } from "./provider-stats";
 
 type ProviderCaptureStore = ProviderCaptureContext & {
   api: string;
@@ -125,17 +126,19 @@ async function finalizeResponseCapture({
 }) {
   try {
     const responseBody = await readResponseBody(response);
+    const capturedResponse = {
+      status: response.status,
+      statusText: response.statusText,
+      headers: sanitizeHeaders(headersToRecord(response.headers)),
+      ...responseBody,
+    };
     await appendProviderCapture({
       conversationPath,
       record: {
         ...record,
         completedAt: new Date().toISOString(),
-        response: {
-          status: response.status,
-          statusText: response.statusText,
-          headers: sanitizeHeaders(headersToRecord(response.headers)),
-          ...responseBody,
-        },
+        response: capturedResponse,
+        stats: extractProviderStatsFromResponse(capturedResponse),
       },
     });
   } catch (error) {

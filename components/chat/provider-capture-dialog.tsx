@@ -16,6 +16,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { ProviderCaptureRecord } from "@/lib/pi/provider-captures";
 import { cn, fetcher } from "@/lib/utils";
+import { ProviderStatsToggle } from "./provider-stats-toggle";
 
 type ProviderCapturesResponse = {
   captures: ProviderCaptureRecord[];
@@ -106,6 +107,7 @@ export function ProviderCaptureDialog({
     () => jsonForTab(selectedCapture, activeTab),
     [activeTab, selectedCapture]
   );
+  const selectedStats = selectedCapture?.stats;
 
   useEffect(() => {
     if (captures.length === 0) {
@@ -252,6 +254,9 @@ export function ProviderCaptureDialog({
               </div>
 
               <div className="ml-auto flex items-center gap-1">
+                {selectedStats && (
+                  <ProviderStatsToggle className="mr-2" stats={selectedStats} />
+                )}
                 <Button
                   disabled={!selectedCapture}
                   onClick={copySelected}
