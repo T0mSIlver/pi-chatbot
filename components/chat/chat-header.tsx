@@ -29,9 +29,10 @@ function PureChatHeader({
 
   return (
     <>
-      <header className="sticky top-0 flex h-14 items-center gap-2 bg-sidebar px-3">
+      <header className="sticky top-0 flex h-[calc(3.5rem_+_env(safe-area-inset-top))] items-center gap-1.5 bg-sidebar px-2 pt-[env(safe-area-inset-top)] md:gap-2 md:px-3">
         <Button
-          className="md:hidden"
+          aria-label="Open sidebar"
+          className="size-10 md:hidden"
           onClick={toggleSidebar}
           size="icon-sm"
           variant="ghost"
@@ -39,12 +40,12 @@ function PureChatHeader({
           <PanelLeftIcon className="size-4" />
         </Button>
 
-        <div className="min-w-0 truncate text-[13px] font-medium text-sidebar-foreground/70">
+        <div className="min-w-0 flex-1 truncate text-[13px] font-medium text-sidebar-foreground/70">
           {selectedProject?.name ?? "Standalone"}
         </div>
         <Button
           aria-label="Inspect OpenAI payload"
-          className="ml-auto"
+          className="size-10 md:size-8"
           data-testid="inspect-openai-payload-button"
           onClick={() => setShowProviderCaptures(true)}
           size="icon-sm"
@@ -56,6 +57,7 @@ function PureChatHeader({
         </Button>
         <Button
           aria-label="MCP settings"
+          className="size-10 md:size-8"
           data-testid="chat-mcp-settings-button"
           onClick={() => setShowMcpSettings(true)}
           size="icon-sm"
@@ -67,6 +69,7 @@ function PureChatHeader({
         </Button>
         <Button
           aria-label={isWorkbenchOpen ? "Close files" : "Open files"}
+          className="size-10 md:size-8"
           data-testid="workspace-files-button"
           onClick={onToggleWorkbench}
           size="icon-sm"

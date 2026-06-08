@@ -50,7 +50,7 @@ const PurePreviewMessage = ({
 
   const attachments = attachmentsFromMessage.length > 0 && (
     <div
-      className="flex flex-row justify-end gap-2"
+      className="flex max-w-full flex-row justify-end gap-2 overflow-x-auto pb-1 no-scrollbar"
       data-testid={"message-attachments"}
     >
       {attachmentsFromMessage.map((attachment) => (
@@ -86,7 +86,7 @@ const PurePreviewMessage = ({
       return (
         <MessageContent
           className={cn("text-[13px] leading-[1.65]", {
-            "w-fit max-w-[min(80%,56ch)] overflow-hidden break-words rounded-2xl rounded-br-lg border border-border/30 bg-gradient-to-br from-secondary to-muted px-3.5 py-2 shadow-[var(--shadow-card)]":
+            "w-fit max-w-[min(90%,56ch)] overflow-hidden break-words rounded-2xl rounded-br-lg border border-border/30 bg-gradient-to-br from-secondary to-muted px-3.5 py-2 shadow-[var(--shadow-card)] md:max-w-[min(80%,56ch)]":
               message.role === "user",
           })}
           data-testid="message-content"
@@ -106,7 +106,7 @@ const PurePreviewMessage = ({
 
       return (
         <Tool
-          className="w-[min(100%,760px)]"
+          className="min-w-0 max-w-[760px]"
           data-testid="pi-tool-block"
           defaultOpen={isOpen}
           key={toolPart.toolCallId}
@@ -176,7 +176,9 @@ const PurePreviewMessage = ({
     >
       <div
         className={cn(
-          isUser ? "flex flex-col items-end gap-2" : "flex items-start gap-3"
+          isUser
+            ? "flex min-w-0 flex-col items-end gap-2"
+            : "flex min-w-0 items-start gap-2 md:gap-3"
         )}
       >
         {isAssistant && (

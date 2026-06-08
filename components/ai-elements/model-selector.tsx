@@ -43,7 +43,7 @@ export const ModelSelectorContent = ({
   <PopoverContent
     align="start"
     className={cn(
-      "w-[280px] p-0 rounded-xl border border-border/60 bg-card/95 backdrop-blur-xl shadow-[var(--shadow-float)]",
+      "w-[min(92vw,320px)] rounded-xl border border-border/60 bg-card/95 p-0 shadow-[var(--shadow-float)] backdrop-blur-xl",
       className
     )}
     side="top"
@@ -62,13 +62,22 @@ export const ModelSelectorInput = ({
   className,
   ...props
 }: ModelSelectorInputProps) => (
-  <CommandInput className={cn("h-auto py-2.5 text-[13px]", className)} {...props} />
+  <CommandInput
+    className={cn("h-auto py-2.5 text-[13px]", className)}
+    {...props}
+  />
 );
 
 export type ModelSelectorListProps = ComponentProps<typeof CommandList>;
 
-export const ModelSelectorList = ({ className, ...props }: ModelSelectorListProps) => (
-  <CommandList className={cn("max-h-[280px]", className)} {...props} />
+export const ModelSelectorList = ({
+  className,
+  ...props
+}: ModelSelectorListProps) => (
+  <CommandList
+    className={cn("max-h-[min(50dvh,320px)]", className)}
+    {...props}
+  />
 );
 
 export type ModelSelectorEmptyProps = ComponentProps<typeof CommandEmpty>;
@@ -85,8 +94,14 @@ export const ModelSelectorGroup = (props: ModelSelectorGroupProps) => (
 
 export type ModelSelectorItemProps = ComponentProps<typeof CommandItem>;
 
-export const ModelSelectorItem = ({ className, ...props }: ModelSelectorItemProps) => (
-  <CommandItem className={cn("w-full text-[13px] rounded-lg", className)} {...props} />
+export const ModelSelectorItem = ({
+  className,
+  ...props
+}: ModelSelectorItemProps) => (
+  <CommandItem
+    className={cn("min-h-10 w-full rounded-lg text-[13px] md:min-h-8", className)}
+    {...props}
+  />
 );
 
 export type ModelSelectorShortcutProps = ComponentProps<typeof CommandShortcut>;

@@ -55,7 +55,7 @@ function PureMessages({
       )}
       <div
         className={cn(
-          "absolute inset-0 touch-pan-y overflow-y-auto",
+          "absolute inset-0 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain",
           messages.length > 0 ? "bg-background" : "bg-transparent"
         )}
         ref={messagesContainerRef}

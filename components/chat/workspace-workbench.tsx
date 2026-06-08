@@ -144,7 +144,7 @@ function FileTreeNode({
     return (
       <div>
         <button
-          className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+          className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground md:h-7"
           onClick={() => setExpanded((current) => !current)}
           style={{ paddingLeft: 8 + level * 14 }}
           type="button"
@@ -174,7 +174,7 @@ function FileTreeNode({
   return (
     <button
       className={cn(
-        "flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] transition-colors hover:bg-muted/60",
+        "flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] transition-colors hover:bg-muted/60 md:h-7",
         isSelected
           ? "bg-muted text-foreground"
           : "text-muted-foreground hover:text-foreground"
@@ -289,7 +289,7 @@ function ChangedPane({
           return (
             <button
               className={cn(
-                "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-[12px] transition-colors",
+                "flex min-h-10 w-full items-center gap-2 rounded-md px-2 py-2 text-left text-[12px] transition-colors md:min-h-8",
                 disabled
                   ? "cursor-not-allowed text-muted-foreground/60"
                   : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
@@ -342,8 +342,8 @@ function CsvPreview({ content }: { content: string }) {
   }
 
   return (
-    <div className="overflow-auto p-3">
-      <table className="w-full border-collapse text-left text-[12px]">
+    <div className="max-w-full overflow-auto p-3">
+      <table className="w-max min-w-full border-collapse text-left text-[12px]">
         <tbody>
           {parsed.map((row, rowIndex) => (
             <tr
@@ -369,7 +369,7 @@ function CsvPreview({ content }: { content: string }) {
 
 function TextPreview({ content }: { content: string }) {
   return (
-    <pre className="min-h-full overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-[12px] leading-5">
+    <pre className="min-h-full max-w-full overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-[12px] leading-5 md:p-4">
       {content}
     </pre>
   );
@@ -436,7 +436,7 @@ function FilePreview({
   if (file.fileKind === "markdown") {
     return (
       <ScrollArea className="h-full">
-        <div className="prose prose-sm max-w-none p-4 dark:prose-invert">
+        <div className="prose prose-sm max-w-none overflow-hidden p-4 [overflow-wrap:anywhere] dark:prose-invert [&_pre]:overflow-x-auto [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto">
           <MessageResponse>{file.content}</MessageResponse>
         </div>
       </ScrollArea>
@@ -529,12 +529,12 @@ export function WorkspaceWorkbench({
   return (
     <aside
       className={cn(
-        "flex h-full min-w-0 flex-col border-l border-border/60 bg-background",
+        "flex h-full max-w-full min-w-0 flex-col border-l border-border/60 bg-background",
         className
       )}
       data-testid="workspace-workbench"
     >
-      <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border/60 px-3">
+      <div className="flex h-[calc(3.5rem_+_env(safe-area-inset-top))] shrink-0 items-center gap-2 border-b border-border/60 px-3 pt-[env(safe-area-inset-top)]">
         <div className="min-w-0 flex-1">
           <div className="truncate text-[13px] font-medium">Files</div>
           <div className="truncate text-[11px] text-muted-foreground">
@@ -545,6 +545,7 @@ export function WorkspaceWorkbench({
         </div>
         <Button
           aria-label="Refresh workspace files"
+          className="size-10 md:size-8"
           onClick={() => {
             if (treeKey) {
               mutate(treeKey);
@@ -564,6 +565,7 @@ export function WorkspaceWorkbench({
         </Button>
         <Button
           aria-label="Close files"
+          className="size-10 md:size-8"
           data-testid="workspace-workbench-close"
           onClick={onClose}
           size="icon-sm"
@@ -578,7 +580,7 @@ export function WorkspaceWorkbench({
         {tabs.map((tab) => (
           <button
             className={cn(
-              "h-7 flex-1 rounded-md px-2 text-[12px] transition-colors",
+              "h-10 flex-1 rounded-md px-2 text-[12px] transition-colors md:h-7",
               activeTab === tab.id
                 ? "bg-muted text-foreground"
                 : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"

@@ -166,11 +166,17 @@
 @layer base {
   body {
     overflow-x: hidden;
+    min-height: 100dvh;
+    overscroll-behavior-x: none;
     position: relative;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
   }
 
   html {
+    height: 100%;
     overflow-x: hidden;
+    overscroll-behavior-x: none;
   }
 
   h1,
@@ -179,12 +185,28 @@
   h4,
   h5,
   h6 {
-    letter-spacing: -0.025em;
+    letter-spacing: 0;
     line-height: 1.2;
   }
 
   p {
     line-height: 1.6;
+  }
+}
+
+@media (max-width: 767px) {
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  input,
+  select,
+  textarea {
+    font-size: 16px;
   }
 }
 
