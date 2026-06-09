@@ -1,7 +1,7 @@
 import "server-only";
 
+import { realpathSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { createRequire } from "node:module";
 import path from "node:path";
 import {
   createAgentSession,
@@ -16,7 +16,6 @@ import { withProviderCaptureModel } from "./provider-capture-provider";
 import type { ProviderCaptureContext } from "./provider-captures";
 import { createShowcaseFileTool } from "./showcase-tool";
 
-const require = createRequire(import.meta.url);
 let mcpAdapterEnvironmentQueue = Promise.resolve();
 
 /**
@@ -32,8 +31,24 @@ function getBundledSkillPaths() {
 }
 
 function getBundledExtensionPaths() {
-  const adapterPackageJson = require.resolve("pi-mcp-adapter/package.json");
-  return [path.dirname(adapterPackageJson)];
+  // Resolve the pi-mcp-adapter package directory WITHOUT require.resolve.
+  // Turbopack/webpack rewrite `require.resolve("literal")` into a numeric module
+  // id at build time (and constant-fold computed specifiers back to literals),
+  // so `path.dirname(<number>)` throws
+  // `The "path" argument must be of type string. Received type number`.
+  // Instead point at the package via node_modules (pnpm/npm symlink the
+  // top-level dep there) and realpath it to the real on-disk location.
+  const override = process.env.PI_MCP_ADAPTER_DIR;
+  if (override) {
+    return [override];
+  }
+
+  const linked = path.join(process.cwd(), "node_modules", "pi-mcp-adapter");
+  try {
+    return [realpathSync(linked)];
+  } catch {
+    return [linked];
+  }
 }
 
 async function withMcpAdapterEnvironment<T>(

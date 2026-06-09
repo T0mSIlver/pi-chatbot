@@ -22,19 +22,25 @@ Per-conversation workspaces live on disk under `~/.pi-chatbot` (override with
 
 ## Gotchas (learned the hard way)
 
-### Packages reached via `require.resolve`/`path.dirname` must be external
-If server code resolves a dependency's path at runtime, e.g. in
-`lib/pi/session.ts`:
-```ts
-const adapterPackageJson = require.resolve("pi-mcp-adapter/package.json");
-return [path.dirname(adapterPackageJson)];
-```
-then that package **must** be listed in `serverExternalPackages` in
-`next.config.ts`. Otherwise turbopack bundles it and rewrites `require.resolve`
-to return a **numeric module id**, so `path.dirname(<number>)` throws
+### Never use `require.resolve` to locate a dep's files at runtime
+Turbopack rewrites `require.resolve("some-pkg/...")` into a **numeric module id**
+at build time, so `path.dirname(<number>)` throws
 `The "path" argument must be of type string. Received type number (NNNNNN)`.
-This only manifests in production builds, never in `dev`/`tsx`. Currently
-external: the `@mariozechner/pi-*` packages and `pi-mcp-adapter`.
+This only appears in the production build, never in `dev`/`tsx`. Two important
+traps:
+- `serverExternalPackages` does **not** fix it (the rewrite fires on the static
+  string literal regardless of externalization).
+- Computed specifiers don't help either — turbopack constant-folds
+  `["a","b"].join("/")` back into the literal.
+
+To locate a package's on-disk directory (e.g. for pi extension paths in
+`lib/pi/session.ts`), point at `node_modules` directly and `realpath` it:
+```ts
+const dir = path.join(process.cwd(), "node_modules", "pi-mcp-adapter");
+return [realpathSync(dir)]; // follows the pnpm symlink to the real location
+```
+After any change here, verify with a real `next build` and
+`grep -r 'resolve("pkg' .next/server/chunks` — it should be empty.
 
 ### Stored workspace paths are absolute — rebase them across machines
 `Chat.workspacePath` / `Chat.piSessionFilePath` are stored as absolute paths.
