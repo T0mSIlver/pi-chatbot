@@ -593,13 +593,6 @@ async function producePiChatRun({
     piSession?.abort().catch(() => undefined);
   };
 
-  const step = (name: string) =>
-    console.error(`[pi chat] step: ${name}`, {
-      chatId: chat.id,
-      workspacePath: chat.workspacePath,
-      piSessionFilePath: chat.piSessionFilePath,
-    });
-
   try {
     if (shouldGenerateMetadata) {
       run.emit({
@@ -608,7 +601,6 @@ async function producePiChatRun({
       });
     }
 
-    step("snapshot-before");
     const beforeSnapshot = await snapshotWorkspaceFiles(workspaceRoots);
     const persistWorkspaceChanges = async () => {
       const afterSnapshot = await snapshotWorkspaceFiles(workspaceRoots);
@@ -649,7 +641,6 @@ async function producePiChatRun({
       return;
     }
 
-    step("create-pi-session");
     piSession = await createPiSdkSession({
       workspacePath: chat.workspacePath,
       sharedPath: workspaceRoots.sharedPath,
@@ -667,13 +658,11 @@ async function producePiChatRun({
       },
     });
 
-    step("apply-branch");
     applyRequestedBranch(
       piSession.sessionManager,
       requestBody.branchFromEntryId
     );
 
-    step("emit-snapshot");
     run.emit({
       type: "snapshot",
       messages: createSubmittedMessages({
@@ -688,7 +677,6 @@ async function producePiChatRun({
       status: "streaming",
     });
 
-    step(`checkpoint-before:${String(currentCheckpointId(piSession.sessionManager))}`);
     await createWorkspaceCheckpoint({
       roots: workspaceRoots,
       conversationPath: chat.workspacePath,
@@ -838,19 +826,16 @@ async function producePiChatRun({
       }
     });
 
-    step("send-user-message");
     await piSession.sendUserMessage(
       await buildPiUserContent(requestBody.message)
     );
 
-    step(`checkpoint-after:${String(currentCheckpointId(piSession.sessionManager))}`);
     await createWorkspaceCheckpoint({
       roots: workspaceRoots,
       conversationPath: chat.workspacePath,
       checkpointId: currentCheckpointId(piSession.sessionManager),
     });
 
-    step("persist-workspace-changes");
     await persistWorkspaceChanges();
 
     if (shouldGenerateMetadata) {
@@ -899,11 +884,7 @@ async function producePiChatRun({
       return;
     }
 
-    // Surface the full stack server-side so path/type errors can be pinpointed.
     console.error("[pi chat] producePiChatRun failed:", error);
-    if (error instanceof Error && error.stack) {
-      console.error("[pi chat] stack:\n", error.stack);
-    }
 
     run.emit({
       type: "error",

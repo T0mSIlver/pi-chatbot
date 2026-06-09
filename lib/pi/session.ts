@@ -94,57 +94,36 @@ export async function createPiSdkSession({
   chat?: Chat;
   providerCapture?: ProviderCaptureContext;
 }) {
-  const sub = (name: string, extra?: Record<string, unknown>) =>
-    console.error(`[pi session] ${name}`, { workspacePath, ...extra });
-
   process.env.MCP_DIRECT_TOOLS = "__none__";
   let mcpConfigPath: string | undefined;
 
   if (chat) {
-    sub("write-mcp-config");
     const written = await writeMcpConfigForChat({
       chat,
       conversationPath: workspacePath,
     });
     mcpConfigPath = written.configPath;
-    sub("wrote-mcp-config", {
-      mcpConfigPath,
-      servers: Object.entries(written.config.mcpServers).map(([id, s]) => ({
-        id,
-        command: (s as Record<string, unknown>).command,
-        cwd: (s as Record<string, unknown>).cwd,
-        url: (s as Record<string, unknown>).url,
-      })),
-    });
   }
 
-  sub("create-model-registry");
   const { agentDir, authStorage, modelRegistry } = createPiModelRegistry();
   const model = withProviderCaptureModel(
     findPiModel({ modelRegistry, selectedModelId }),
     providerCapture
   );
 
-  sub("open-or-create-session", { sessionFilePath, agentDir });
   const sessionManager = sessionFilePath
     ? SessionManager.open(sessionFilePath, undefined, workspacePath)
     : SessionManager.create(workspacePath);
 
   const created = await withMcpAdapterEnvironment(workspacePath, async () => {
-    sub("new-resource-loader", {
-      extensionPaths: getBundledExtensionPaths(),
-      skillPaths: getBundledSkillPaths(),
-    });
     const resourceLoader = new DefaultResourceLoader({
       cwd: workspacePath,
       agentDir,
       additionalExtensionPaths: getBundledExtensionPaths(),
       additionalSkillPaths: getBundledSkillPaths(),
     });
-    sub("resource-loader-reload");
     await resourceLoader.reload();
 
-    sub("create-agent-session");
     const result = await createAgentSession({
       agentDir,
       authStorage,
@@ -164,12 +143,9 @@ export async function createPiSdkSession({
     });
 
     if (mcpConfigPath) {
-      sub("set-mcp-config-flag", { mcpConfigPath });
       result.session.extensionRunner.setFlagValue("mcp-config", mcpConfigPath);
     }
-    sub("bind-extensions");
     await result.session.bindExtensions({});
-    sub("bind-extensions-done");
 
     return result;
   });
