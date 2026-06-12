@@ -1,25 +1,12 @@
 import { readFile, stat } from "node:fs/promises";
 import { ChatbotError } from "@/lib/errors";
+import { APP_PREVIEW_CSP } from "@/lib/pi/app-preview";
 import { getAuthorizedWorkspace } from "@/lib/pi/workspace-auth";
 import {
   getWorkspaceContentType,
   resolveWorkspacePath,
 } from "@/lib/pi/workspace-files";
 import type { WorkspaceScope } from "@/lib/types";
-
-const APP_PREVIEW_CSP = [
-  "default-src 'none'",
-  "script-src 'self' 'unsafe-inline'",
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
-  "font-src 'self' data:",
-  "media-src 'self' data: blob:",
-  "connect-src 'none'",
-  "object-src 'none'",
-  "base-uri 'none'",
-  "form-action 'none'",
-  "frame-ancestors 'self'",
-].join("; ");
 
 function parseScope(value: string): WorkspaceScope {
   if (value !== "conversation" && value !== "shared") {

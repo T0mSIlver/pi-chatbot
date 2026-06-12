@@ -3,6 +3,7 @@ import "server-only";
 import { stat } from "node:fs/promises";
 import { defineTool, type ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
+import { APP_PREVIEW_CDN_HOSTS } from "@/lib/pi/app-preview";
 import type { WorkspaceDisplayIntent, WorkspaceScope } from "@/lib/types";
 import {
   classifyWorkspaceFile,
@@ -45,6 +46,7 @@ export function createShowcaseFileTool({
       "Use showcase_file after creating or updating a file the user should inspect visually.",
       "Use showcase_file for generated HTML apps, markdown documents, images, CSV files, or code files that are better viewed in the side pane.",
       "Do not paste file contents into chat after using showcase_file.",
+      `HTML apps may load JS/CSS libraries only from these CDNs (others are blocked by the preview CSP): ${APP_PREVIEW_CDN_HOSTS.join(", ")}.`,
     ],
     parameters: Type.Object({
       path: Type.String({
