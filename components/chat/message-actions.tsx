@@ -1,7 +1,6 @@
 import { GitBranchIcon, PencilIcon, RefreshCwIcon } from "lucide-react";
 import { memo } from "react";
 import { toast } from "sonner";
-import { useCopyToClipboard } from "usehooks-ts";
 import { useActiveChat } from "@/hooks/use-active-chat";
 import type { ChatMessage } from "@/lib/types";
 import {
@@ -9,6 +8,39 @@ import {
   MessageActions as Actions,
 } from "../ai-elements/message";
 import { CopyIcon } from "./icons";
+
+async function copyTextToClipboard(text: string) {
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall back to the selection-based copy path below.
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.top = "0";
+  textarea.style.left = "0";
+  textarea.style.width = "1px";
+  textarea.style.height = "1px";
+  textarea.style.opacity = "0";
+
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+
+  try {
+    if (!document.execCommand("copy")) {
+      throw new Error("Clipboard copy command was rejected");
+    }
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
 
 export function PureMessageActions({
   message,
@@ -18,7 +50,6 @@ export function PureMessageActions({
   message: ChatMessage;
   isLoading: boolean;
 }) {
-  const [_, copyToClipboard] = useCopyToClipboard();
   const { startEditMessage, regenerateMessage, branchMessage } =
     useActiveChat();
 
@@ -33,8 +64,12 @@ export function PureMessageActions({
   }
 
   const handleCopy = async () => {
-    await copyToClipboard(textFromParts);
-    toast.success("Copied to clipboard!");
+    try {
+      await copyTextToClipboard(textFromParts);
+      toast.success("Copied to clipboard!");
+    } catch {
+      toast.error("Could not copy to clipboard");
+    }
   };
 
   return (

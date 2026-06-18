@@ -290,6 +290,64 @@ test.describe("Chat Page", () => {
     await expect(stats).toContainText("64 tok");
   });
 
+  test("copies prompt and response text to the clipboard", async ({
+    baseURL,
+    context,
+    page,
+  }) => {
+    const timestamp = new Date().toISOString();
+    const chatId = "00000000-0000-4000-8000-000000000301";
+
+    await context.grantPermissions(["clipboard-read", "clipboard-write"], {
+      origin: baseURL ?? "http://localhost:3000",
+    });
+    await page.route("**/api/messages**", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.searchParams.get("chatId") !== chatId) {
+        await route.continue();
+        return;
+      }
+
+      await route.fulfill({
+        json: {
+          isReadonly: false,
+          messages: [
+            {
+              id: "user-message",
+              metadata: { createdAt: timestamp },
+              parts: [{ type: "text", text: "Prompt to copy" }],
+              role: "user",
+            },
+            {
+              id: "assistant-message",
+              metadata: { createdAt: timestamp },
+              parts: [{ type: "text", text: "Response to copy." }],
+              role: "assistant",
+            },
+          ],
+          projectId: "00000000-0000-4000-8000-000000000302",
+          userId: "00000000-0000-4000-8000-000000000303",
+        },
+      });
+    });
+
+    await page.goto(`/chat/${chatId}`);
+
+    const userMessage = page.getByTestId("message-user");
+    await userMessage.hover();
+    await userMessage.getByRole("button", { name: "Copy" }).click();
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe("Prompt to copy");
+
+    const assistantMessage = page.getByTestId("message-assistant");
+    await assistantMessage.hover();
+    await assistantMessage.getByRole("button", { name: "Copy" }).click();
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe("Response to copy.");
+  });
+
   test("can type in the input field", async ({ page }) => {
     await page.goto("/");
     const input = page.getByTestId("multimodal-input");
