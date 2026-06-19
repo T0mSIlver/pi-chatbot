@@ -45,10 +45,12 @@ async function copyTextToClipboard(text: string) {
 export function PureMessageActions({
   message,
   isLoading,
+  isFinalAssistantAnswer,
 }: {
   chatId: string;
   message: ChatMessage;
   isLoading: boolean;
+  isFinalAssistantAnswer: boolean;
 }) {
   const { startEditMessage, regenerateMessage, branchMessage } =
     useActiveChat();
@@ -59,7 +61,10 @@ export function PureMessageActions({
     .join("\n")
     .trim();
 
-  if (isLoading) {
+  if (
+    isLoading ||
+    (message.role === "assistant" && !isFinalAssistantAnswer)
+  ) {
     return null;
   }
 
@@ -74,7 +79,7 @@ export function PureMessageActions({
 
   return (
     <Actions className="-ml-0.5 opacity-0 transition-opacity duration-150 group-hover/message:opacity-100">
-      {textFromParts && (
+      {textFromParts && message.role !== "system" && (
         <Action
           className="text-muted-foreground/50 hover:text-foreground"
           onClick={handleCopy}
@@ -92,7 +97,7 @@ export function PureMessageActions({
           <PencilIcon className="size-3.5" />
         </Action>
       )}
-      {message.role === "assistant" && (
+      {message.role === "assistant" && isFinalAssistantAnswer && (
         <Action
           className="text-muted-foreground/50 hover:text-foreground"
           onClick={() => regenerateMessage(message.id)}
@@ -101,7 +106,7 @@ export function PureMessageActions({
           <RefreshCwIcon className="size-3.5" />
         </Action>
       )}
-      {(message.role === "user" || message.role === "assistant") && (
+      {message.role === "assistant" && isFinalAssistantAnswer && (
         <Action
           className="text-muted-foreground/50 hover:text-foreground"
           onClick={() => branchMessage(message.id)}
@@ -118,5 +123,6 @@ export const MessageActions = memo(
   PureMessageActions,
   (prevProps, nextProps) =>
     prevProps.isLoading === nextProps.isLoading &&
+    prevProps.isFinalAssistantAnswer === nextProps.isFinalAssistantAnswer &&
     prevProps.message === nextProps.message
 );

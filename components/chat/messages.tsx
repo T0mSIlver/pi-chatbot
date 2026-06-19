@@ -1,6 +1,7 @@
 import { ArrowDownIcon } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { useMessages } from "@/hooks/use-messages";
+import { isFinalAssistantAnswer } from "@/lib/chat-turns";
 import type { ChatMessage, ChatStatus, SetMessages } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Greeting } from "./greeting";
@@ -68,6 +69,7 @@ function PureMessages({
               isLoading={
                 status === "streaming" && messages.length - 1 === index
               }
+              isFinalAssistantAnswer={isFinalAssistantAnswer(messages, index)}
               isReadonly={isReadonly}
               key={message.id}
               message={message}

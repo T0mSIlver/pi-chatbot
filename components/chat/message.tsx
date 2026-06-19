@@ -22,6 +22,7 @@ const PurePreviewMessage = ({
   chatId,
   message,
   isLoading,
+  isFinalAssistantAnswer,
   setMessages: _setMessages,
   isReadonly,
   requiresScrollPadding: _requiresScrollPadding,
@@ -29,6 +30,7 @@ const PurePreviewMessage = ({
   chatId: string;
   message: ChatMessage;
   isLoading: boolean;
+  isFinalAssistantAnswer: boolean;
   setMessages: SetMessages;
   isReadonly: boolean;
   requiresScrollPadding: boolean;
@@ -144,6 +146,7 @@ const PurePreviewMessage = ({
   const actions = !isReadonly && (
     <MessageActions
       chatId={chatId}
+      isFinalAssistantAnswer={isFinalAssistantAnswer}
       isLoading={isLoading}
       key={`action-${message.id}`}
       message={message}
@@ -191,7 +194,9 @@ const PurePreviewMessage = ({
         {isAssistant ? (
           <div className="flex min-w-0 flex-1 flex-col gap-1.5">
             {content}
-            {stats && !isThinking && <ProviderStatsToggle stats={stats} />}
+            {stats && isFinalAssistantAnswer && (
+              <ProviderStatsToggle stats={stats} />
+            )}
           </div>
         ) : (
           content

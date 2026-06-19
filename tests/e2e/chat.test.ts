@@ -290,6 +290,118 @@ test.describe("Chat Page", () => {
     await expect(stats).toContainText("64 tok");
   });
 
+  test("shows controls and stats only on final assistant answers", async ({
+    page,
+  }) => {
+    const timestamp = new Date().toISOString();
+    const chatId = "00000000-0000-4000-8000-000000000204";
+
+    await page.route("**/api/messages**", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.searchParams.get("chatId") !== chatId) {
+        await route.continue();
+        return;
+      }
+
+      await route.fulfill({
+        json: {
+          isReadonly: false,
+          messages: [
+            {
+              id: "user-message",
+              metadata: { createdAt: timestamp },
+              parts: [{ type: "text", text: "Inspect the project" }],
+              role: "user",
+            },
+            {
+              id: "assistant-tool-message",
+              metadata: {
+                createdAt: timestamp,
+                providerStats: { promptTokens: 100 },
+              },
+              parts: [
+                {
+                  state: "done",
+                  text: "I should inspect a file.",
+                  type: "reasoning",
+                },
+                {
+                  input: { path: "README.md" },
+                  state: "output-available",
+                  toolCallId: "tool-call",
+                  toolName: "read",
+                  type: "tool-pi",
+                },
+              ],
+              role: "assistant",
+            },
+            {
+              id: "assistant-final-message",
+              metadata: {
+                createdAt: timestamp,
+                providerStats: {
+                  generatedTokens: 50,
+                  promptTokens: 300,
+                },
+              },
+              parts: [
+                {
+                  state: "done",
+                  text: "The file contains the project overview.",
+                  type: "reasoning",
+                },
+                { type: "text", text: "Here is the final answer." },
+              ],
+              role: "assistant",
+            },
+          ],
+          projectId: "00000000-0000-4000-8000-000000000205",
+          userId: "00000000-0000-4000-8000-000000000206",
+        },
+      });
+    });
+
+    await page.goto(`/chat/${chatId}`);
+
+    const userMessage = page.getByTestId("message-user");
+    await expect(
+      userMessage.getByRole("button", { name: "Copy" })
+    ).toHaveCount(1);
+    await expect(
+      userMessage.getByRole("button", { name: "Edit" })
+    ).toHaveCount(1);
+    await expect(
+      userMessage.getByRole("button", { name: "Branch" })
+    ).toHaveCount(0);
+
+    const assistantMessages = page.getByTestId("message-assistant");
+    const toolMessage = assistantMessages.nth(0);
+    await expect(toolMessage.getByTestId("provider-stats")).toHaveCount(0);
+    await expect(
+      toolMessage.getByRole("button", { name: "Copy" })
+    ).toHaveCount(0);
+    await expect(
+      toolMessage.getByRole("button", { name: "Regenerate" })
+    ).toHaveCount(0);
+    await expect(
+      toolMessage.getByRole("button", { name: "Branch" })
+    ).toHaveCount(0);
+
+    const finalMessage = assistantMessages.nth(1);
+    await expect(finalMessage.getByTestId("provider-stats")).toContainText(
+      "300 tok"
+    );
+    await expect(
+      finalMessage.getByRole("button", { name: "Copy" })
+    ).toHaveCount(1);
+    await expect(
+      finalMessage.getByRole("button", { name: "Regenerate" })
+    ).toHaveCount(1);
+    await expect(
+      finalMessage.getByRole("button", { name: "Branch" })
+    ).toHaveCount(1);
+  });
+
   test("copies prompt and response text to the clipboard", async ({
     baseURL,
     context,
