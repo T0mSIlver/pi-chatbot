@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { RunStatus } from "@/lib/db/schema";
 import type { PiStreamEvent } from "@/lib/pi/events";
 import { applyPiStreamEventToMessages } from "@/lib/pi/stream-state";
 import type {
@@ -15,10 +16,32 @@ type ChatRunSubscriber = {
   encoder: TextEncoder;
 };
 
+// Hooks for persisting a run's lifecycle to the durable shadow (the Stream
+// table). Injected so this control-plane module stays free of a DB import and
+// is unit-testable. The implementation (lib/pi/run-persistence.ts) owns
+// sequencing (onStart before onTerminal) and checkpoint throttling.
+export type RunPersistenceContext = {
+  runId: string;
+  chatId: string;
+  assistantMessageId: string;
+};
+
+export type RunPersistence = {
+  onStart?: (ctx: RunPersistenceContext) => void;
+  onCheckpoint?: (ctx: RunPersistenceContext, messages: ChatMessage[]) => void;
+  onTerminal?: (
+    ctx: RunPersistenceContext,
+    status: RunStatus,
+    error: string | null,
+    messages: ChatMessage[]
+  ) => void;
+};
+
 export type ChatRun = {
   readonly abortSignal: AbortSignal;
   readonly assistantMessageId: string;
   readonly chatId: string;
+  readonly runId: string;
   readonly isActive: boolean;
   readonly isStopRequested: boolean;
   emit: (event: PiStreamEvent) => void;
@@ -50,8 +73,11 @@ class InMemoryChatRun implements InternalChatRun {
   readonly abortController = new AbortController();
   readonly assistantMessageId: string;
   readonly chatId: string;
+  readonly runId: string;
+  private lastError: string | null = null;
   private latestWorkspaceDisplayIntent: WorkspaceDisplayIntent | null = null;
   private messages: ChatMessage[];
+  private readonly persistence: RunPersistence | undefined;
   private status: ChatStatus = "submitted";
   private stopRequested = false;
   private readonly subscribers = new Set<ChatRunSubscriber>();
@@ -61,14 +87,29 @@ class InMemoryChatRun implements InternalChatRun {
     assistantMessageId,
     chatId,
     initialMessages,
+    persistence,
+    runId,
   }: {
     assistantMessageId: string;
     chatId: string;
     initialMessages: ChatMessage[];
+    persistence?: RunPersistence;
+    runId: string;
   }) {
     this.assistantMessageId = assistantMessageId;
     this.chatId = chatId;
     this.messages = initialMessages;
+    this.persistence = persistence;
+    this.runId = runId;
+    this.persistence?.onStart?.(this.persistenceContext);
+  }
+
+  private get persistenceContext(): RunPersistenceContext {
+    return {
+      runId: this.runId,
+      chatId: this.chatId,
+      assistantMessageId: this.assistantMessageId,
+    };
   }
 
   get abortSignal() {
@@ -92,6 +133,10 @@ class InMemoryChatRun implements InternalChatRun {
       return;
     }
 
+    if (event.type === "error") {
+      this.lastError = event.message;
+    }
+
     this.applyEvent(event);
 
     for (const subscriber of [...this.subscribers]) {
@@ -102,8 +147,20 @@ class InMemoryChatRun implements InternalChatRun {
       }
     }
 
-    if (["done", "error", "stopped"].includes(event.type)) {
-      this.markTerminal();
+    if (
+      event.type === "done" ||
+      event.type === "error" ||
+      event.type === "stopped"
+    ) {
+      const status: RunStatus =
+        event.type === "error"
+          ? "error"
+          : event.type === "stopped"
+            ? "aborted"
+            : "completed";
+      this.markTerminal(status);
+    } else if (event.type !== "snapshot" && event.type !== "title") {
+      this.persistence?.onCheckpoint?.(this.persistenceContext, this.messages);
     }
   }
 
@@ -194,12 +251,19 @@ class InMemoryChatRun implements InternalChatRun {
     };
   }
 
-  private markTerminal() {
+  private markTerminal(status: RunStatus = "completed") {
     if (this.terminal) {
       return;
     }
 
     this.terminal = true;
+    this.persistence?.onTerminal?.(
+      this.persistenceContext,
+      status,
+      this.lastError,
+      this.messages
+    );
+
     for (const subscriber of [...this.subscribers]) {
       try {
         subscriber.controller.close();
@@ -221,12 +285,16 @@ export function startChatRun({
   assistantMessageId,
   chatId,
   initialMessages,
+  persistence,
   producer,
+  runId,
 }: {
   assistantMessageId: string;
   chatId: string;
   initialMessages: ChatMessage[];
+  persistence?: RunPersistence;
   producer: (run: ChatRun) => Promise<void>;
+  runId: string;
 }) {
   const existingRun = runs.get(chatId);
 
@@ -242,6 +310,8 @@ export function startChatRun({
     assistantMessageId,
     chatId,
     initialMessages,
+    persistence,
+    runId,
   });
   runs.set(chatId, run);
 
@@ -269,9 +339,13 @@ export function startChatRun({
   return run;
 }
 
-export function getActiveChatRun(chatId: string) {
-  const run = runs.get(chatId);
-  return run?.isActive ? run : null;
+// Returns the cached run even if it has reached a terminal state (within the
+// post-terminal retention window). Callers check `.isActive` when they need the
+// "running right now" subset. Returning terminal runs lets a client that
+// reconnects just after a run finished replay the final snapshot over the live
+// channel instead of racing the persisted transcript.
+export function getChatRun(chatId: string) {
+  return runs.get(chatId) ?? null;
 }
 
 export function stopChatRun(chatId: string) {

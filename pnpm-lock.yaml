@@ -176,9 +176,6 @@ importers:
       redis:
         specifier: ^5.0.0
         version: 5.9.0
-      resumable-stream:
-        specifier: ^2.2.10
-        version: 2.2.10
       server-only:
         specifier: ^0.0.1
         version: 0.0.1
@@ -4738,9 +4735,6 @@ packages:
     resolution: {integrity: sha512-NPRy+/ncIMeDlTAsuqwKIiferiawhefFJtkNSW0qZJEqMEb+qBt/77B/jGeeek+F0uOeN05CDa6HXbbIgtVX4w==}
     engines: {node: '>= 0.4'}
     hasBin: true
-
-  resumable-stream@2.2.10:
-    resolution: {integrity: sha512-pSJtiDVkPgirq4x+e+gu67IEkUVYGu1cPgW5AnTHCfYGRfIUjS3d4pj7VGveXmYWb9hy6yIMFTM4YzK7rqj14A==}
 
   retry@0.12.0:
     resolution: {integrity: sha512-9LkiTwjUh6rT555DtE9rTX+BKByPfrMzEAtnlEtdEwr3Nkffwiihqe2bWADg+OQRjt9gl6ICdmB/ZFDCGAtSow==}
@@ -10110,8 +10104,6 @@ snapshots:
       is-core-module: 2.16.1
       path-parse: 1.0.7
       supports-preserve-symlinks-flag: 1.0.0
-
-  resumable-stream@2.2.10: {}
 
   retry@0.12.0: {}
 
