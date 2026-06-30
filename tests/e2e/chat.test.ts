@@ -225,13 +225,13 @@ test.describe("Chat Page", () => {
     await page.getByTestId("inspect-openai-payload-item").click();
 
     await expect(page.getByTestId("provider-capture-dialog")).toBeVisible();
-    await expect(page.getByTestId("provider-capture-json")).toContainText(
-      '"role": "user"'
-    );
+    const requestPanel = page.getByTestId("provider-capture-request");
+    await expect(requestPanel).toContainText("user");
+    await expect(requestPanel).toContainText("Inspect this prompt");
     await expect(page.getByTestId("provider-stats")).toContainText("100 tok");
 
     await page.getByTestId("provider-capture-response-tab").click();
-    await expect(page.getByTestId("provider-capture-json")).toContainText(
+    await expect(page.getByTestId("provider-capture-response")).toContainText(
       "Captured response"
     );
     await page.getByTestId("provider-stats-generation").click();

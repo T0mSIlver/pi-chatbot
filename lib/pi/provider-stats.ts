@@ -1,4 +1,5 @@
 import { isFinalAssistantAnswer } from "@/lib/chat-turns";
+import { splitSsePayloads } from "@/lib/openai-inspect";
 import type { ChatMessage, ProviderTokenStats } from "@/lib/types";
 
 type ProviderStatsCapture = {
@@ -118,12 +119,8 @@ function parseJsonLine(line: string) {
 }
 
 function parseSseJsonPayloads(rawBody: string) {
-  return rawBody
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("data:"))
-    .map((line) => line.replace(/^data:\s*/, ""))
-    .filter((line) => line && line !== "[DONE]")
+  return splitSsePayloads(rawBody)
+    .filter((payload) => payload && payload !== "[DONE]")
     .map(parseJsonLine)
     .filter(Boolean);
 }

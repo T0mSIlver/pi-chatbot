@@ -49,11 +49,15 @@ export type ProviderCaptureRecord = {
     bodyReadError?: string;
   };
   stats?: ProviderTokenStats;
-  error?: {
-    name?: string;
-    message: string;
-    stack?: string;
-  };
+  error?: CapturedError;
+};
+
+export type CapturedError = {
+  name?: string;
+  message: string;
+  code?: string;
+  stack?: string;
+  cause?: CapturedError;
 };
 
 export type ProviderCaptureCounter = {
@@ -102,13 +106,35 @@ export function parseCapturedBody(rawBody: string | undefined) {
   }
 }
 
-export function serializeCaptureError(error: unknown) {
+// Bound how deep we walk an error's `cause` chain so a self-referential or
+// pathologically nested cause can never spin forever.
+const MAX_ERROR_CAUSE_DEPTH = 5;
+
+export function serializeCaptureError(
+  error: unknown,
+  depth = 0
+): CapturedError {
   if (error instanceof Error) {
-    return {
+    const serialized: CapturedError = {
       name: error.name,
       message: error.message,
       stack: error.stack,
     };
+
+    // undici surfaces the real network failure (ECONNRESET, "other side
+    // closed", DNS errors, ...) on `error.code`/`error.cause` while the top
+    // level is just a generic "fetch failed" TypeError. Preserve both so the
+    // inspector can explain why a request failed.
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === "string") {
+      serialized.code = code;
+    }
+
+    if (error.cause !== undefined && depth < MAX_ERROR_CAUSE_DEPTH) {
+      serialized.cause = serializeCaptureError(error.cause, depth + 1);
+    }
+
+    return serialized;
   }
 
   return {
