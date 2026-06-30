@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { expect, type Page, test } from "@playwright/test";
+import {
+  type APIRequestContext,
+  expect,
+  type Page,
+  test,
+} from "@playwright/test";
 
 const CHAT_URL_REGEX = /\/chat\/[\w-]+/;
 const ERROR_TEXT_REGEX = /error|failed|trouble/i;
@@ -33,6 +38,18 @@ async function sendSlowBackgroundMessage(page: Page, message: string) {
 
 async function createProject(page: Page, name = `API project ${Date.now()}`) {
   const response = await page.request.post("/api/projects", {
+    data: { name },
+  });
+  expect(response.status()).toBe(201);
+  return ((await response.json()) as { project: { id: string; name: string } })
+    .project;
+}
+
+async function createProjectViaRequest(
+  request: APIRequestContext,
+  name = `API project ${Date.now()}`
+) {
+  const response = await request.post("/api/projects", {
     data: { name },
   });
   expect(response.status()).toBe(201);
@@ -330,6 +347,87 @@ test.describe("Chat API Integration", () => {
       await page.request.delete(`/api/chat?id=${chatId}`);
       await page.request.delete(`/api/projects/${project.id}`);
       await page.request.patch("/api/mcp/config", {
+        data: { json: JSON.stringify({ mcpServers: {} }) },
+      });
+    }
+  });
+
+  test("adds MCP servers through guided API and probes ping status", async ({
+    request,
+  }) => {
+    const signIn = await request.get("/api/auth/guest?redirectUrl=/");
+    expect(signIn.status()).toBe(200);
+
+    const project = await createProjectViaRequest(request);
+    const goodId = `ping-${Date.now()}`;
+    const badId = `bad-url-${Date.now()}`;
+    const mcpServerScript =
+      'const readline=require("node:readline");const rl=readline.createInterface({input:process.stdin});rl.on("line",(line)=>{const message=JSON.parse(line);if(message.method==="initialize"){console.log(JSON.stringify({jsonrpc:"2.0",id:message.id,result:{protocolVersion:message.params.protocolVersion,capabilities:{},serverInfo:{name:"test-mcp",version:"1.0.0"}}}));}else if(message.method==="ping"){console.log(JSON.stringify({jsonrpc:"2.0",id:message.id,result:{}}));}});';
+
+    try {
+      const addCommand = await request.post("/api/mcp/config/servers", {
+        data: {
+          command: `node -e '${mcpServerScript}'`,
+          id: goodId,
+          mode: "command",
+        },
+      });
+      expect(addCommand.status()).toBe(201);
+      expect((await addCommand.json()).json).toContain(goodId);
+
+      const duplicate = await request.post("/api/mcp/config/servers", {
+        data: {
+          command: `node -e '${mcpServerScript}'`,
+          id: goodId,
+          mode: "command",
+        },
+      });
+      expect(duplicate.status()).toBe(400);
+      expect((await duplicate.json()).cause).toContain("already exists");
+
+      const addUrl = await request.post("/api/mcp/config/servers", {
+        data: {
+          id: badId,
+          mode: "url",
+          url: "http://127.0.0.1:1/mcp",
+        },
+      });
+      expect(addUrl.status()).toBe(201);
+
+      const projectToggle = await request.patch(
+        `/api/projects/${project.id}/mcp`,
+        { data: { servers: { [goodId]: true, [badId]: false } } }
+      );
+      expect(projectToggle.status()).toBe(200);
+
+      const status = await request.post("/api/mcp/status", {
+        data: { projectId: project.id, serverIds: [goodId, badId] },
+        timeout: 15_000,
+      });
+      expect(status.status()).toBe(200);
+
+      const body = (await status.json()) as {
+        servers: Array<{
+          connectionState: string;
+          effectiveEnabled: boolean;
+          enablementSource: string;
+          id: string;
+          message?: string;
+        }>;
+      };
+      const good = body.servers.find((server) => server.id === goodId);
+      const bad = body.servers.find((server) => server.id === badId);
+
+      expect(good).toMatchObject({
+        connectionState: "connected",
+        effectiveEnabled: true,
+        enablementSource: "project-enabled",
+      });
+      expect(bad?.connectionState).toMatch(/error|timeout/);
+      expect(JSON.stringify(body)).not.toContain("secret");
+    } finally {
+      await request.delete(`/api/projects/${project.id}`);
+      await request.patch("/api/mcp/config", {
         data: { json: JSON.stringify({ mcpServers: {} }) },
       });
     }
