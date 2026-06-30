@@ -14,8 +14,19 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { copyTextToClipboard } from "@/lib/clipboard";
+import {
+  buildCopyPayload,
+  parseInspectorRequest,
+  parseInspectorResponse,
+} from "@/lib/openai-inspect";
 import type { ProviderCaptureRecord } from "@/lib/pi/provider-captures";
 import { cn, fetcher } from "@/lib/utils";
+import {
+  RequestPanel,
+  type ResponseMode,
+  ResponsePanel,
+} from "./provider-capture-views";
 import { ProviderStatsToggle } from "./provider-stats-toggle";
 
 type ProviderCapturesResponse = {
@@ -43,9 +54,9 @@ function formatCaptureTime(value: string) {
   });
 }
 
-function statusLabel(capture: ProviderCaptureRecord) {
+function statusLabel(capture: ProviderCaptureRecord, recovered: boolean) {
   if (capture.error) {
-    return "Error";
+    return recovered ? "Retried" : "Failed";
   }
   if (capture.response) {
     return String(capture.response.status);
@@ -53,9 +64,9 @@ function statusLabel(capture: ProviderCaptureRecord) {
   return "Pending";
 }
 
-function statusVariant(capture: ProviderCaptureRecord) {
+function statusVariant(capture: ProviderCaptureRecord, recovered: boolean) {
   if (capture.error) {
-    return "destructive" as const;
+    return recovered ? ("outline" as const) : ("destructive" as const);
   }
   if (!capture.response) {
     return "outline" as const;
@@ -63,23 +74,36 @@ function statusVariant(capture: ProviderCaptureRecord) {
   return capture.response.status >= 400 ? "destructive" : "secondary";
 }
 
-function jsonForTab(
-  capture: ProviderCaptureRecord | undefined,
-  tab: CaptureTab
-) {
-  if (!capture) {
-    return "";
+/**
+ * The OpenAI client retries transient network failures, so an errored capture
+ * is usually followed by a successful retry for the same assistant turn. We
+ * flag those so the UI can present them as recovered rather than alarming
+ * "errors" the user never saw in the chat.
+ */
+function computeRecoveredIds(captures: ProviderCaptureRecord[]) {
+  const latestSuccessIndex = new Map<string, number>();
+  for (const capture of captures) {
+    if (capture.response && capture.response.status < 400) {
+      const key = `${capture.assistantMessageId}|${capture.purpose}`;
+      const previous = latestSuccessIndex.get(key) ?? Number.NEGATIVE_INFINITY;
+      if (capture.requestIndex > previous) {
+        latestSuccessIndex.set(key, capture.requestIndex);
+      }
+    }
   }
 
-  if (tab === "request") {
-    return JSON.stringify(capture.request, null, 2);
+  const recovered = new Set<string>();
+  for (const capture of captures) {
+    if (!capture.error) {
+      continue;
+    }
+    const key = `${capture.assistantMessageId}|${capture.purpose}`;
+    const successIndex = latestSuccessIndex.get(key);
+    if (successIndex !== undefined && successIndex > capture.requestIndex) {
+      recovered.add(capture.id);
+    }
   }
-
-  return JSON.stringify(
-    capture.response ?? capture.error ?? "No response recorded yet.",
-    null,
-    2
-  );
+  return recovered;
 }
 
 export function ProviderCaptureDialog({
@@ -89,6 +113,7 @@ export function ProviderCaptureDialog({
 }: ProviderCaptureDialogProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<CaptureTab>("request");
+  const [responseMode, setResponseMode] = useState<ResponseMode>("collected");
 
   const { data, error, isLoading, mutate } = useSWR<ProviderCapturesResponse>(
     open
@@ -98,16 +123,25 @@ export function ProviderCaptureDialog({
     { revalidateOnFocus: false }
   );
 
-  const captures = data?.captures ?? [];
+  const captures = useMemo(() => data?.captures ?? [], [data]);
+  const recoveredIds = useMemo(() => computeRecoveredIds(captures), [captures]);
   const selectedCapture = useMemo(
     () => captures.find((capture) => capture.id === selectedId) ?? captures[0],
     [captures, selectedId]
   );
-  const selectedJson = useMemo(
-    () => jsonForTab(selectedCapture, activeTab),
-    [activeTab, selectedCapture]
+  const parsedRequest = useMemo(
+    () =>
+      selectedCapture ? parseInspectorRequest(selectedCapture) : undefined,
+    [selectedCapture]
+  );
+  const parsedResponse = useMemo(
+    () =>
+      selectedCapture ? parseInspectorResponse(selectedCapture) : undefined,
+    [selectedCapture]
   );
   const selectedStats = selectedCapture?.stats;
+  const canToggleResponseMode =
+    activeTab === "response" && parsedResponse?.kind === "stream";
 
   useEffect(() => {
     if (captures.length === 0) {
@@ -121,13 +155,22 @@ export function ProviderCaptureDialog({
   }, [captures, selectedId]);
 
   const copySelected = useCallback(async () => {
-    if (!selectedJson) {
+    if (!selectedCapture) {
       return;
     }
 
-    await navigator.clipboard.writeText(selectedJson);
-    toast.success("Copied payload");
-  }, [selectedJson]);
+    const text = buildCopyPayload(selectedCapture, {
+      tab: activeTab,
+      responseMode,
+    });
+
+    try {
+      await copyTextToClipboard(text);
+      toast.success("Copied to clipboard");
+    } catch {
+      toast.error("Could not copy to clipboard");
+    }
+  }, [activeTab, responseMode, selectedCapture]);
 
   const downloadSelected = useCallback(() => {
     if (!selectedCapture) {
@@ -163,8 +206,8 @@ export function ProviderCaptureDialog({
 
         <div className="grid min-h-0 grid-cols-1 gap-3 md:grid-cols-[280px_minmax(0,1fr)]">
           <div className="min-h-0 overflow-hidden rounded-md border border-border bg-muted/20">
-            <div className="flex h-10 items-center justify-between border-b border-border px-3">
-              <div className="text-xs font-medium text-muted-foreground">
+            <div className="flex h-10 items-center justify-between border-border border-b px-3">
+              <div className="font-medium text-muted-foreground text-xs">
                 Captures
               </div>
               <Button
@@ -179,66 +222,69 @@ export function ProviderCaptureDialog({
             </div>
             <ScrollArea className="h-[calc(100%-2.5rem)]">
               {isLoading ? (
-                <div className="p-3 text-sm text-muted-foreground">
+                <div className="p-3 text-muted-foreground text-sm">
                   Loading captures...
                 </div>
               ) : error ? (
-                <div className="p-3 text-sm text-destructive">
+                <div className="p-3 text-destructive text-sm">
                   Couldn&apos;t load captures.
                 </div>
               ) : captures.length === 0 ? (
                 <div
-                  className="p-3 text-sm text-muted-foreground"
+                  className="p-3 text-muted-foreground text-sm"
                   data-testid="provider-capture-empty"
                 >
                   No provider captures recorded for this conversation yet.
                 </div>
               ) : (
                 <div className="flex flex-col">
-                  {captures.map((capture) => (
-                    <button
-                      className={cn(
-                        "flex min-h-16 w-full flex-col gap-1 border-b border-border px-3 py-2 text-left transition-colors hover:bg-muted/50",
-                        selectedCapture?.id === capture.id && "bg-muted"
-                      )}
-                      data-testid="provider-capture-list-item"
-                      key={capture.id}
-                      onClick={() => setSelectedId(capture.id)}
-                      type="button"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="truncate text-xs font-medium">
-                          Request {capture.requestIndex}
-                        </span>
-                        <Badge
-                          className="h-4 rounded px-1.5 text-[10px]"
-                          variant={statusVariant(capture)}
-                        >
-                          {statusLabel(capture)}
-                        </Badge>
-                      </div>
-                      <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
-                        <span className="truncate">{capture.model}</span>
-                        <span aria-hidden="true">/</span>
-                        <span>{capture.purpose}</span>
-                      </div>
-                      <div className="text-[11px] text-muted-foreground">
-                        {formatCaptureTime(capture.createdAt)}
-                      </div>
-                    </button>
-                  ))}
+                  {captures.map((capture) => {
+                    const recovered = recoveredIds.has(capture.id);
+                    return (
+                      <button
+                        className={cn(
+                          "flex min-h-16 w-full flex-col gap-1 border-border border-b px-3 py-2 text-left transition-colors hover:bg-muted/50",
+                          selectedCapture?.id === capture.id && "bg-muted"
+                        )}
+                        data-testid="provider-capture-list-item"
+                        key={capture.id}
+                        onClick={() => setSelectedId(capture.id)}
+                        type="button"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="truncate font-medium text-xs">
+                            Request {capture.requestIndex}
+                          </span>
+                          <Badge
+                            className="h-4 rounded px-1.5 text-[10px]"
+                            variant={statusVariant(capture, recovered)}
+                          >
+                            {statusLabel(capture, recovered)}
+                          </Badge>
+                        </div>
+                        <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+                          <span className="truncate">{capture.model}</span>
+                          <span aria-hidden="true">/</span>
+                          <span>{capture.purpose}</span>
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">
+                          {formatCaptureTime(capture.createdAt)}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </ScrollArea>
           </div>
 
           <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-md border border-border">
-            <div className="flex min-h-10 flex-wrap items-center gap-2 border-b border-border px-3 py-2">
+            <div className="flex min-h-10 flex-wrap items-center gap-2 border-border border-b px-3 py-2">
               <div className="flex rounded-md border border-border bg-muted/30 p-0.5">
                 {(["request", "response"] as const).map((tab) => (
                   <button
                     className={cn(
-                      "h-7 rounded px-3 text-xs font-medium capitalize transition-colors",
+                      "h-7 rounded px-3 font-medium text-xs capitalize transition-colors",
                       activeTab === tab
                         ? "bg-background text-foreground shadow-sm"
                         : "text-muted-foreground hover:text-foreground"
@@ -253,7 +299,33 @@ export function ProviderCaptureDialog({
                 ))}
               </div>
 
-              <div className="ml-auto flex items-center gap-1">
+              {canToggleResponseMode && (
+                <div className="flex rounded-md border border-border bg-muted/30 p-0.5">
+                  {(
+                    [
+                      ["collected", "Collected"],
+                      ["stream", "Chunks"],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <button
+                      className={cn(
+                        "h-7 rounded px-3 font-medium text-xs transition-colors",
+                        responseMode === value
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                      data-testid={`provider-capture-response-mode-${value}`}
+                      key={value}
+                      onClick={() => setResponseMode(value)}
+                      type="button"
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1">
                 {selectedStats && (
                   <ProviderStatsToggle className="mr-2" stats={selectedStats} />
                 )}
@@ -281,15 +353,23 @@ export function ProviderCaptureDialog({
             </div>
 
             <ScrollArea className="min-h-0">
-              {selectedCapture ? (
-                <pre
-                  className="min-h-full whitespace-pre-wrap break-words p-3 font-mono text-xs leading-relaxed"
-                  data-testid="provider-capture-json"
+              {selectedCapture && parsedRequest && parsedResponse ? (
+                <div
+                  data-testid={`provider-capture-${activeTab}`}
+                  key={`${selectedCapture.id}-${activeTab}`}
                 >
-                  {selectedJson}
-                </pre>
+                  {activeTab === "request" ? (
+                    <RequestPanel request={parsedRequest} />
+                  ) : (
+                    <ResponsePanel
+                      mode={responseMode}
+                      recovered={recoveredIds.has(selectedCapture.id)}
+                      response={parsedResponse}
+                    />
+                  )}
+                </div>
               ) : (
-                <div className="p-3 text-sm text-muted-foreground">
+                <div className="p-3 text-muted-foreground text-sm">
                   Select a capture to inspect.
                 </div>
               )}
