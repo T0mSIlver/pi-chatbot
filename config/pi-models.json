@@ -1,0 +1,47 @@
+{
+  "providers": {
+    "llamacpp": {
+      "baseUrl": "http://192.168.1.183:8080/v1",
+      "api": "openai-completions",
+      "apiKey": "no-key",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      },
+      "models": [
+        {
+          "id": "qwen36a3b-35b",
+          "name": "Qwen 3.6 A3B 35B",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "contextWindow": 262144,
+          "maxTokens": 32768
+        },
+        {
+          "id": "qwen36dense-27b",
+          "name": "Qwen 3.6 Dense 27B",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "contextWindow": 140000,
+          "maxTokens": 32768
+        },
+        {
+          "id": "gemma4-31b",
+          "name": "Gemma 4 31B",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "contextWindow": 65000,
+          "maxTokens": 32768
+        },
+        {
+          "id": "gemma4-26b-a4b",
+          "name": "Gemma 4 26B A4B",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "contextWindow": 262144,
+          "maxTokens": 65536
+        }
+      ]
+    }
+  }
+}

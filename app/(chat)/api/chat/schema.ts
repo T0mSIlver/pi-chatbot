@@ -7,7 +7,7 @@ const textPartSchema = z.object({
 
 const filePartSchema = z.object({
   type: z.enum(["file"]),
-  mediaType: z.enum(["image/jpeg", "image/png"]),
+  mediaType: z.string().min(1),
   name: z.string().min(1).max(100),
   url: z.string().url(),
 });
@@ -20,18 +20,13 @@ const userMessageSchema = z.object({
   parts: z.array(partSchema),
 });
 
-const toolApprovalMessageSchema = z.object({
-  id: z.string(),
-  role: z.enum(["user", "assistant"]),
-  parts: z.array(z.record(z.unknown())),
-});
-
 export const postRequestBodySchema = z.object({
   id: z.string().uuid(),
-  message: userMessageSchema.optional(),
-  messages: z.array(toolApprovalMessageSchema).optional(),
+  assistantMessageId: z.string().uuid().optional(),
+  projectId: z.string().uuid().optional(),
+  message: userMessageSchema,
   selectedChatModel: z.string(),
-  selectedVisibilityType: z.enum(["public", "private"]),
+  branchFromEntryId: z.string().min(1).nullable().optional(),
 });
 
 export type PostRequestBody = z.infer<typeof postRequestBodySchema>;

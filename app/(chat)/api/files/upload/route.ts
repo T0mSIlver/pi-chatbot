@@ -4,6 +4,16 @@ import { z } from "zod";
 
 import { auth } from "@/app/(auth)/auth";
 
+function createDataUrl({
+  content,
+  contentType,
+}: {
+  content: ArrayBuffer;
+  contentType: string;
+}) {
+  return `data:${contentType};base64,${Buffer.from(content).toString("base64")}`;
+}
+
 const FileSchema = z.object({
   file: z
     .instanceof(Blob)
@@ -47,6 +57,15 @@ export async function POST(request: Request) {
     const filename = (formData.get("file") as File).name;
     const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
     const fileBuffer = await file.arrayBuffer();
+    const dataUrlUpload = {
+      url: createDataUrl({ content: fileBuffer, contentType: file.type }),
+      pathname: safeName,
+      contentType: file.type,
+    };
+
+    if (!process.env.BLOB_READ_WRITE_TOKEN) {
+      return NextResponse.json(dataUrlUpload);
+    }
 
     try {
       const data = await put(`${safeName}`, fileBuffer, {
@@ -55,7 +74,7 @@ export async function POST(request: Request) {
 
       return NextResponse.json(data);
     } catch (_error) {
-      return NextResponse.json({ error: "Upload failed" }, { status: 500 });
+      return NextResponse.json(dataUrlUpload);
     }
   } catch (_error) {
     return NextResponse.json(

@@ -32,10 +32,6 @@ export async function GET(request: Request) {
     return new ChatbotError("not_found:chat").toResponse();
   }
 
-  if (chat.userId !== session.user.id) {
-    return new ChatbotError("forbidden:vote").toResponse();
-  }
-
   const votes = await getVotesByChatId({ id: chatId });
 
   return Response.json(votes, { status: 200 });
@@ -68,10 +64,6 @@ export async function PATCH(request: Request) {
 
   if (!chat) {
     return new ChatbotError("not_found:vote").toResponse();
-  }
-
-  if (chat.userId !== session.user.id) {
-    return new ChatbotError("forbidden:vote").toResponse();
   }
 
   await voteMessage({

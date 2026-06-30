@@ -1,6 +1,5 @@
-import { customProvider, gateway } from "ai";
+import { customProvider } from "ai";
 import { isTestEnvironment } from "../constants";
-import { titleModel } from "./models";
 
 export const myProvider = isTestEnvironment
   ? (() => {
@@ -19,12 +18,14 @@ export function getLanguageModel(modelId: string) {
     return myProvider.languageModel(modelId);
   }
 
-  return gateway.languageModel(modelId);
+  throw new Error("AI SDK language models are disabled; chat is Pi-backed.");
 }
 
 export function getTitleModel() {
   if (isTestEnvironment && myProvider) {
     return myProvider.languageModel("title-model");
   }
-  return gateway.languageModel(titleModel.id);
+  throw new Error(
+    "AI SDK title generation is disabled; chat titles are deterministic."
+  );
 }

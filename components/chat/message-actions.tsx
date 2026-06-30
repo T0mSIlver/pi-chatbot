@@ -1,35 +1,59 @@
-import equal from "fast-deep-equal";
+import { GitBranchIcon, PencilIcon, RefreshCwIcon } from "lucide-react";
 import { memo } from "react";
 import { toast } from "sonner";
-import { useSWRConfig } from "swr";
-import { useCopyToClipboard } from "usehooks-ts";
-import type { Vote } from "@/lib/db/schema";
+import { useActiveChat } from "@/hooks/use-active-chat";
 import type { ChatMessage } from "@/lib/types";
 import {
   MessageAction as Action,
   MessageActions as Actions,
 } from "../ai-elements/message";
-import { CopyIcon, PencilEditIcon, ThumbDownIcon, ThumbUpIcon } from "./icons";
+import { CopyIcon } from "./icons";
+
+async function copyTextToClipboard(text: string) {
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall back to the selection-based copy path below.
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.top = "0";
+  textarea.style.left = "0";
+  textarea.style.width = "1px";
+  textarea.style.height = "1px";
+  textarea.style.opacity = "0";
+
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+
+  try {
+    if (!document.execCommand("copy")) {
+      throw new Error("Clipboard copy command was rejected");
+    }
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
 
 export function PureMessageActions({
-  chatId,
   message,
-  vote,
   isLoading,
-  onEdit,
+  isFinalAssistantAnswer,
 }: {
   chatId: string;
   message: ChatMessage;
-  vote: Vote | undefined;
   isLoading: boolean;
-  onEdit?: () => void;
+  isFinalAssistantAnswer: boolean;
 }) {
-  const { mutate } = useSWRConfig();
-  const [_, copyToClipboard] = useCopyToClipboard();
-
-  if (isLoading) {
-    return null;
-  }
+  const { startEditMessage, regenerateMessage, branchMessage } =
+    useActiveChat();
 
   const textFromParts = message.parts
     ?.filter((part) => part.type === "text")
@@ -37,171 +61,68 @@ export function PureMessageActions({
     .join("\n")
     .trim();
 
-  const handleCopy = async () => {
-    if (!textFromParts) {
-      toast.error("There's no text to copy!");
-      return;
-    }
-
-    await copyToClipboard(textFromParts);
-    toast.success("Copied to clipboard!");
-  };
-
-  if (message.role === "user") {
-    return (
-      <Actions className="-mr-0.5 justify-end opacity-0 transition-opacity duration-150 group-hover/message:opacity-100">
-        <div className="flex items-center gap-0.5">
-          {onEdit && (
-            <Action
-              className="size-7 text-muted-foreground/50 hover:text-foreground"
-              data-testid="message-edit-button"
-              onClick={onEdit}
-              tooltip="Edit"
-            >
-              <PencilEditIcon />
-            </Action>
-          )}
-          <Action
-            className="size-7 text-muted-foreground/50 hover:text-foreground"
-            onClick={handleCopy}
-            tooltip="Copy"
-          >
-            <CopyIcon />
-          </Action>
-        </div>
-      </Actions>
-    );
+  if (
+    isLoading ||
+    (message.role === "assistant" && !isFinalAssistantAnswer)
+  ) {
+    return null;
   }
+
+  const handleCopy = async () => {
+    try {
+      await copyTextToClipboard(textFromParts);
+      toast.success("Copied to clipboard!");
+    } catch {
+      toast.error("Could not copy to clipboard");
+    }
+  };
 
   return (
     <Actions className="-ml-0.5 opacity-0 transition-opacity duration-150 group-hover/message:opacity-100">
-      <Action
-        className="text-muted-foreground/50 hover:text-foreground"
-        onClick={handleCopy}
-        tooltip="Copy"
-      >
-        <CopyIcon />
-      </Action>
-
-      <Action
-        className="text-muted-foreground/50 hover:text-foreground"
-        data-testid="message-upvote"
-        disabled={vote?.isUpvoted}
-        onClick={() => {
-          const upvote = fetch(
-            `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/vote`,
-            {
-              method: "PATCH",
-              body: JSON.stringify({
-                chatId,
-                messageId: message.id,
-                type: "up",
-              }),
-            }
-          );
-
-          toast.promise(upvote, {
-            loading: "Upvoting Response...",
-            success: () => {
-              mutate<Vote[]>(
-                `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/vote?chatId=${chatId}`,
-                (currentVotes) => {
-                  if (!currentVotes) {
-                    return [];
-                  }
-
-                  const votesWithoutCurrent = currentVotes.filter(
-                    (currentVote) => currentVote.messageId !== message.id
-                  );
-
-                  return [
-                    ...votesWithoutCurrent,
-                    {
-                      chatId,
-                      messageId: message.id,
-                      isUpvoted: true,
-                    },
-                  ];
-                },
-                { revalidate: false }
-              );
-
-              return "Upvoted Response!";
-            },
-            error: "Failed to upvote response.",
-          });
-        }}
-        tooltip="Upvote Response"
-      >
-        <ThumbUpIcon />
-      </Action>
-
-      <Action
-        className="text-muted-foreground/50 hover:text-foreground"
-        data-testid="message-downvote"
-        disabled={vote && !vote.isUpvoted}
-        onClick={() => {
-          const downvote = fetch(
-            `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/vote`,
-            {
-              method: "PATCH",
-              body: JSON.stringify({
-                chatId,
-                messageId: message.id,
-                type: "down",
-              }),
-            }
-          );
-
-          toast.promise(downvote, {
-            loading: "Downvoting Response...",
-            success: () => {
-              mutate<Vote[]>(
-                `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/vote?chatId=${chatId}`,
-                (currentVotes) => {
-                  if (!currentVotes) {
-                    return [];
-                  }
-
-                  const votesWithoutCurrent = currentVotes.filter(
-                    (currentVote) => currentVote.messageId !== message.id
-                  );
-
-                  return [
-                    ...votesWithoutCurrent,
-                    {
-                      chatId,
-                      messageId: message.id,
-                      isUpvoted: false,
-                    },
-                  ];
-                },
-                { revalidate: false }
-              );
-
-              return "Downvoted Response!";
-            },
-            error: "Failed to downvote response.",
-          });
-        }}
-        tooltip="Downvote Response"
-      >
-        <ThumbDownIcon />
-      </Action>
+      {textFromParts && message.role !== "system" && (
+        <Action
+          className="text-muted-foreground/50 hover:text-foreground"
+          onClick={handleCopy}
+          tooltip="Copy"
+        >
+          <CopyIcon />
+        </Action>
+      )}
+      {message.role === "user" && textFromParts && (
+        <Action
+          className="text-muted-foreground/50 hover:text-foreground"
+          onClick={() => startEditMessage(message.id)}
+          tooltip="Edit"
+        >
+          <PencilIcon className="size-3.5" />
+        </Action>
+      )}
+      {message.role === "assistant" && isFinalAssistantAnswer && (
+        <Action
+          className="text-muted-foreground/50 hover:text-foreground"
+          onClick={() => regenerateMessage(message.id)}
+          tooltip="Regenerate"
+        >
+          <RefreshCwIcon className="size-3.5" />
+        </Action>
+      )}
+      {message.role === "assistant" && isFinalAssistantAnswer && (
+        <Action
+          className="text-muted-foreground/50 hover:text-foreground"
+          onClick={() => branchMessage(message.id)}
+          tooltip="Branch"
+        >
+          <GitBranchIcon className="size-3.5" />
+        </Action>
+      )}
     </Actions>
   );
 }
 
 export const MessageActions = memo(
   PureMessageActions,
-  (prevProps, nextProps) => {
-    if (!equal(prevProps.vote, nextProps.vote)) {
-      return false;
-    }
-    if (prevProps.isLoading !== nextProps.isLoading) {
-      return false;
-    }
-
-    return true;
-  }
+  (prevProps, nextProps) =>
+    prevProps.isLoading === nextProps.isLoading &&
+    prevProps.isFinalAssistantAnswer === nextProps.isFinalAssistantAnswer &&
+    prevProps.message === nextProps.message
 );

@@ -1,7 +1,5 @@
 "use client";
 
-import type { UseChatHelpers } from "@ai-sdk/react";
-import type { UIMessage } from "ai";
 import equal from "fast-deep-equal";
 import {
   ArrowUpIcon,
@@ -9,6 +7,7 @@ import {
   EyeIcon,
   LockIcon,
   WrenchIcon,
+  XIcon,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
@@ -42,7 +41,13 @@ import {
   DEFAULT_CHAT_MODEL,
   type ModelCapabilities,
 } from "@/lib/ai/models";
-import type { Attachment, ChatMessage } from "@/lib/types";
+import type {
+  Attachment,
+  ChatMessage,
+  ChatStatus,
+  SendMessage,
+  SetMessages,
+} from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
   PromptInput,
@@ -60,7 +65,6 @@ import {
   slashCommands,
 } from "./slash-commands";
 import { SuggestedActions } from "./suggested-actions";
-import type { VisibilityType } from "./visibility-selector";
 
 function setCookie(name: string, value: string) {
   const maxAge = 60 * 60 * 24 * 365;
@@ -80,32 +84,28 @@ function PureMultimodalInput({
   setMessages,
   sendMessage,
   className,
-  selectedVisibilityType,
   selectedModelId,
   onModelChange,
+  isLoading,
   editingMessage,
   onCancelEdit,
-  isLoading,
 }: {
   chatId: string;
   input: string;
   setInput: Dispatch<SetStateAction<string>>;
-  status: UseChatHelpers<ChatMessage>["status"];
+  status: ChatStatus;
   stop: () => void;
   attachments: Attachment[];
   setAttachments: Dispatch<SetStateAction<Attachment[]>>;
-  messages: UIMessage[];
-  setMessages: UseChatHelpers<ChatMessage>["setMessages"];
-  sendMessage:
-    | UseChatHelpers<ChatMessage>["sendMessage"]
-    | (() => Promise<void>);
+  messages: ChatMessage[];
+  setMessages: SetMessages;
+  sendMessage: SendMessage;
   className?: string;
-  selectedVisibilityType: VisibilityType;
   selectedModelId: string;
   onModelChange?: (modelId: string) => void;
-  editingMessage?: ChatMessage | null;
-  onCancelEdit?: () => void;
   isLoading?: boolean;
+  editingMessage?: { messageId: string; originalText: string } | null;
+  onCancelEdit?: () => void;
 }) {
   const router = useRouter();
   const { setTheme, resolvedTheme } = useTheme();
@@ -113,7 +113,7 @@ function PureMultimodalInput({
   const { width } = useWindowSize();
   const hasAutoFocused = useRef(false);
   useEffect(() => {
-    if (!hasAutoFocused.current && width) {
+    if (!hasAutoFocused.current && width >= 768) {
       const timer = setTimeout(() => {
         textareaRef.current?.focus();
         hasAutoFocused.current = true;
@@ -215,36 +215,41 @@ function PureMultimodalInput({
   const [slashQuery, setSlashQuery] = useState("");
   const [slashIndex, setSlashIndex] = useState(0);
 
-  const submitForm = useCallback(() => {
-    window.history.pushState(
-      {},
-      "",
-      `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/chat/${chatId}`
-    );
+  const submitForm = useCallback(async () => {
+    await sendMessage(
+      {
+        role: "user",
+        parts: [
+          ...attachments.map((attachment) => ({
+            type: "file" as const,
+            url: attachment.url,
+            name: attachment.name,
+            mediaType: attachment.contentType,
+          })),
+          {
+            type: "text",
+            text: input,
+          },
+        ],
+      },
+      {
+        onAccepted: () => {
+          window.history.pushState(
+            {},
+            "",
+            `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/chat/${chatId}`
+          );
 
-    sendMessage({
-      role: "user",
-      parts: [
-        ...attachments.map((attachment) => ({
-          type: "file" as const,
-          url: attachment.url,
-          name: attachment.name,
-          mediaType: attachment.contentType,
-        })),
-        {
-          type: "text",
-          text: input,
+          setAttachments([]);
+          setLocalStorageInput("");
+          setInput("");
+
+          if (width && width > 768) {
+            textareaRef.current?.focus();
+          }
         },
-      ],
-    });
-
-    setAttachments([]);
-    setLocalStorageInput("");
-    setInput("");
-
-    if (width && width > 768) {
-      textareaRef.current?.focus();
-    }
+      }
+    );
   }, [
     input,
     setInput,
@@ -370,35 +375,15 @@ function PureMultimodalInput({
 
   return (
     <div className={cn("relative flex w-full flex-col gap-4", className)}>
-      {editingMessage && onCancelEdit && (
-        <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
-          <span>Editing message</span>
-          <button
-            className="rounded px-1.5 py-0.5 text-muted-foreground/50 transition-colors hover:bg-muted hover:text-foreground"
-            onMouseDown={(e) => {
-              e.preventDefault();
-              onCancelEdit();
-            }}
-            type="button"
-          >
-            Cancel
-          </button>
-        </div>
-      )}
-
-      {!editingMessage &&
-        !isLoading &&
+      {!isLoading &&
         messages.length === 0 &&
         attachments.length === 0 &&
         uploadQueue.length === 0 && (
-          <SuggestedActions
-            chatId={chatId}
-            selectedVisibilityType={selectedVisibilityType}
-            sendMessage={sendMessage}
-          />
+          <SuggestedActions chatId={chatId} sendMessage={sendMessage} />
         )}
 
       <input
+        accept="image/jpeg,image/png"
         className="pointer-events-none fixed -top-4 -left-4 size-0.5 opacity-0"
         multiple
         onChange={handleFileChange}
@@ -420,7 +405,7 @@ function PureMultimodalInput({
 
       <PromptInput
         className="[&>div]:rounded-2xl [&>div]:border [&>div]:border-border/30 [&>div]:bg-card/70 [&>div]:shadow-[var(--shadow-composer)] [&>div]:transition-shadow [&>div]:duration-300 [&>div]:focus-within:shadow-[var(--shadow-composer-focus)]"
-        onSubmit={() => {
+        onSubmit={async () => {
           if (input.startsWith("/")) {
             const query = input.slice(1).trim();
             const cmd = slashCommands.find((c) => c.name === query);
@@ -433,12 +418,32 @@ function PureMultimodalInput({
             return;
           }
           if (status === "ready" || status === "error") {
-            submitForm();
+            await submitForm();
           } else {
             toast.error("Please wait for the model to finish its response!");
           }
         }}
       >
+        {editingMessage && (
+          <div
+            className="flex items-center gap-2 border-border/30 border-b px-3 py-2 text-muted-foreground text-xs"
+            data-testid="editing-message-banner"
+          >
+            <span className="min-w-0 flex-1 truncate">Editing message</span>
+            <Button
+              className="h-6 w-6 rounded-md p-1"
+              onClick={(event) => {
+                event.preventDefault();
+                onCancelEdit?.();
+              }}
+              type="button"
+              variant="ghost"
+            >
+              <XIcon className="size-3.5" />
+              <span className="sr-only">Cancel edit</span>
+            </Button>
+          </div>
+        )}
         {(attachments.length > 0 || uploadQueue.length > 0) && (
           <div
             className="flex w-full self-start flex-row gap-2 overflow-x-auto px-3 pt-3 no-scrollbar"
@@ -473,7 +478,7 @@ function PureMultimodalInput({
           </div>
         )}
         <PromptInputTextarea
-          className="min-h-24 text-[13px] leading-relaxed px-4 pt-3.5 pb-1.5 placeholder:text-muted-foreground/35"
+          className="min-h-16 px-4 pt-3.5 pb-1.5 text-[16px] leading-relaxed placeholder:text-muted-foreground/35 md:min-h-24 md:text-[13px]"
           data-testid="multimodal-input"
           onChange={handleInput}
           onKeyDown={(e) => {
@@ -504,19 +509,13 @@ function PureMultimodalInput({
                 return;
               }
             }
-            if (e.key === "Escape" && editingMessage && onCancelEdit) {
-              e.preventDefault();
-              onCancelEdit();
-            }
           }}
-          placeholder={
-            editingMessage ? "Edit your message..." : "Ask anything..."
-          }
+          placeholder="Ask anything..."
           ref={textareaRef}
           value={input}
         />
-        <PromptInputFooter className="px-3 pb-3">
-          <PromptInputTools>
+        <PromptInputFooter className="items-center gap-2 px-3 pb-3">
+          <PromptInputTools className="min-w-0 flex-1">
             <AttachmentsButton
               fileInputRef={fileInputRef}
               selectedModelId={selectedModelId}
@@ -528,18 +527,21 @@ function PureMultimodalInput({
             />
           </PromptInputTools>
 
-          {status === "submitted" ? (
+          {status === "submitted" || status === "streaming" ? (
             <StopButton setMessages={setMessages} stop={stop} />
           ) : (
             <PromptInputSubmit
               className={cn(
-                "h-7 w-7 rounded-xl transition-all duration-200",
-                input.trim()
+                "h-9 w-9 rounded-xl transition-all duration-200 md:h-7 md:w-7",
+                input.trim() || attachments.length > 0
                   ? "bg-foreground text-background hover:opacity-85 active:scale-95"
                   : "bg-muted text-muted-foreground/25 cursor-not-allowed"
               )}
               data-testid="send-button"
-              disabled={!input.trim() || uploadQueue.length > 0}
+              disabled={
+                (!input.trim() && attachments.length === 0) ||
+                uploadQueue.length > 0
+              }
               status={status}
               variant="secondary"
             >
@@ -564,16 +566,16 @@ export const MultimodalInput = memo(
     if (!equal(prevProps.attachments, nextProps.attachments)) {
       return false;
     }
-    if (prevProps.selectedVisibilityType !== nextProps.selectedVisibilityType) {
-      return false;
-    }
     if (prevProps.selectedModelId !== nextProps.selectedModelId) {
       return false;
     }
-    if (prevProps.editingMessage !== nextProps.editingMessage) {
+    if (prevProps.isLoading !== nextProps.isLoading) {
       return false;
     }
-    if (prevProps.isLoading !== nextProps.isLoading) {
+    if (
+      prevProps.editingMessage?.messageId !==
+      nextProps.editingMessage?.messageId
+    ) {
       return false;
     }
     if (prevProps.messages.length !== nextProps.messages.length) {
@@ -590,7 +592,7 @@ function PureAttachmentsButton({
   selectedModelId,
 }: {
   fileInputRef: React.MutableRefObject<HTMLInputElement | null>;
-  status: UseChatHelpers<ChatMessage>["status"];
+  status: ChatStatus;
   selectedModelId: string;
 }) {
   const { data: modelsResponse } = useSWR(
@@ -606,7 +608,7 @@ function PureAttachmentsButton({
   return (
     <Button
       className={cn(
-        "h-7 w-7 rounded-lg border border-border/40 p-1 transition-colors",
+        "h-9 w-9 rounded-xl border border-border/40 p-1 transition-colors md:h-7 md:w-7 md:rounded-lg",
         hasVision
           ? "text-foreground hover:border-border hover:text-foreground"
           : "text-muted-foreground/30 cursor-not-allowed"
@@ -655,7 +657,7 @@ function PureModelSelectorCompact({
     <ModelSelector onOpenChange={setOpen} open={open}>
       <ModelSelectorTrigger asChild>
         <Button
-          className="h-7 max-w-[200px] justify-between gap-1.5 rounded-lg px-2 text-[12px] text-muted-foreground transition-colors hover:text-foreground"
+          className="h-9 max-w-[calc(100vw-9.5rem)] justify-between gap-1.5 rounded-xl px-2.5 text-[12px] text-muted-foreground transition-colors hover:text-foreground md:h-7 md:max-w-[200px] md:rounded-lg md:px-2"
           data-testid="model-selector"
           variant="ghost"
         >
@@ -796,11 +798,11 @@ function PureStopButton({
   setMessages,
 }: {
   stop: () => void;
-  setMessages: UseChatHelpers<ChatMessage>["setMessages"];
+  setMessages: SetMessages;
 }) {
   return (
     <Button
-      className="h-7 w-7 rounded-xl bg-foreground p-1 text-background transition-all duration-200 hover:opacity-85 active:scale-95 disabled:bg-muted disabled:text-muted-foreground/25 disabled:cursor-not-allowed"
+      className="h-9 w-9 rounded-xl bg-foreground p-1 text-background transition-all duration-200 hover:opacity-85 active:scale-95 disabled:bg-muted disabled:text-muted-foreground/25 disabled:cursor-not-allowed md:h-7 md:w-7"
       data-testid="stop-button"
       onClick={(event) => {
         event.preventDefault();

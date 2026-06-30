@@ -1,15 +1,13 @@
+"use client";
+
+import { BracesIcon } from "lucide-react";
 import Link from "next/link";
-import { memo } from "react";
-import { useChatVisibility } from "@/hooks/use-chat-visibility";
+import { memo, useState } from "react";
 import type { Chat } from "@/lib/db/schema";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuPortal,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import {
@@ -17,40 +15,52 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "../ui/sidebar";
-import {
-  CheckCircleFillIcon,
-  GlobeIcon,
-  LockIcon,
-  MoreHorizontalIcon,
-  ShareIcon,
-  TrashIcon,
-} from "./icons";
+import { MoreHorizontalIcon, TrashIcon } from "./icons";
+import { ProviderCaptureDialog } from "./provider-capture-dialog";
 
 const PureChatItem = ({
   chat,
   isActive,
+  isRunning,
   onDelete,
   setOpenMobile,
 }: {
   chat: Chat;
   isActive: boolean;
+  isRunning: boolean;
   onDelete: (chatId: string) => void;
   setOpenMobile: (open: boolean) => void;
 }) => {
-  const { visibilityType, setVisibilityType } = useChatVisibility({
-    chatId: chat.id,
-    initialVisibilityType: chat.visibility,
-  });
+  const [showProviderCaptures, setShowProviderCaptures] = useState(false);
 
   return (
     <SidebarMenuItem>
       <SidebarMenuButton
         asChild
-        className="h-8 rounded-none text-[13px] text-sidebar-foreground/50 transition-all duration-150 hover:bg-transparent hover:text-sidebar-foreground data-active:bg-transparent data-active:font-normal data-active:text-sidebar-foreground/50 data-[active=true]:text-sidebar-foreground data-[active=true]:font-medium data-[active=true]:border-b data-[active=true]:border-dashed data-[active=true]:border-sidebar-foreground/50"
+        className="min-h-11 rounded-none pr-7 text-[13px] text-sidebar-foreground/50 transition-all duration-150 hover:bg-transparent hover:text-sidebar-foreground data-active:bg-transparent data-active:font-normal data-active:text-sidebar-foreground/50 data-[active=true]:border-b data-[active=true]:border-dashed data-[active=true]:border-sidebar-foreground/50 data-[active=true]:font-medium data-[active=true]:text-sidebar-foreground"
         isActive={isActive}
       >
         <Link href={`/chat/${chat.id}`} onClick={() => setOpenMobile(false)}>
-          <span className="truncate">{chat.title}</span>
+          <span className="flex min-w-0 flex-col gap-0.5 py-1">
+            <span className="flex min-w-0 items-center gap-1.5">
+              {isRunning && (
+                <span
+                  className="relative flex size-2 shrink-0"
+                  title="Generating"
+                >
+                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-500/50" />
+                  <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
+                  <span className="sr-only">Generating</span>
+                </span>
+              )}
+              <span className="truncate">{chat.title}</span>
+            </span>
+            {chat.summary && (
+              <span className="line-clamp-2 text-[11px] leading-snug text-sidebar-foreground/40">
+                {chat.summary}
+              </span>
+            )}
+          </span>
         </Link>
       </SidebarMenuButton>
 
@@ -66,43 +76,13 @@ const PureChatItem = ({
         </DropdownMenuTrigger>
 
         <DropdownMenuContent align="end" side="bottom">
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger className="cursor-pointer">
-              <ShareIcon />
-              <span>Share</span>
-            </DropdownMenuSubTrigger>
-            <DropdownMenuPortal>
-              <DropdownMenuSubContent>
-                <DropdownMenuItem
-                  className="cursor-pointer flex-row justify-between"
-                  onClick={() => {
-                    setVisibilityType("private");
-                  }}
-                >
-                  <div className="flex flex-row items-center gap-2">
-                    <LockIcon size={12} />
-                    <span>Private</span>
-                  </div>
-                  {visibilityType === "private" ? (
-                    <CheckCircleFillIcon />
-                  ) : null}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className="cursor-pointer flex-row justify-between"
-                  onClick={() => {
-                    setVisibilityType("public");
-                  }}
-                >
-                  <div className="flex flex-row items-center gap-2">
-                    <GlobeIcon />
-                    <span>Public</span>
-                  </div>
-                  {visibilityType === "public" ? <CheckCircleFillIcon /> : null}
-                </DropdownMenuItem>
-              </DropdownMenuSubContent>
-            </DropdownMenuPortal>
-          </DropdownMenuSub>
-
+          <DropdownMenuItem
+            data-testid="inspect-openai-payload-item"
+            onSelect={() => setShowProviderCaptures(true)}
+          >
+            <BracesIcon />
+            <span>Inspect OpenAI payload</span>
+          </DropdownMenuItem>
           <DropdownMenuItem
             onSelect={() => onDelete(chat.id)}
             variant="destructive"
@@ -112,6 +92,11 @@ const PureChatItem = ({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      <ProviderCaptureDialog
+        chatId={chat.id}
+        onOpenChange={setShowProviderCaptures}
+        open={showProviderCaptures}
+      />
     </SidebarMenuItem>
   );
 };
@@ -120,5 +105,12 @@ export const ChatItem = memo(PureChatItem, (prevProps, nextProps) => {
   if (prevProps.isActive !== nextProps.isActive) {
     return false;
   }
-  return true;
+  if (prevProps.isRunning !== nextProps.isRunning) {
+    return false;
+  }
+  return (
+    prevProps.chat.id === nextProps.chat.id &&
+    prevProps.chat.title === nextProps.chat.title &&
+    prevProps.chat.summary === nextProps.chat.summary
+  );
 });

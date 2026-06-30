@@ -1,31 +1,139 @@
-import type { InferUITool, UIMessage } from "ai";
 import { z } from "zod";
 import type { ArtifactKind } from "@/components/chat/artifact";
-import type { createDocument } from "./ai/tools/create-document";
-import type { getWeather } from "./ai/tools/get-weather";
-import type { requestSuggestions } from "./ai/tools/request-suggestions";
-import type { updateDocument } from "./ai/tools/update-document";
-import type { Suggestion } from "./db/schema";
+import type { Suggestion } from "@/lib/db/schema";
 
 export const messageMetadataSchema = z.object({
   createdAt: z.string(),
+  parentId: z.string().nullable().optional(),
+  checkpointId: z.string().optional(),
+  providerRequestIndex: z.number().optional(),
+  providerStats: z
+    .object({
+      generatedTokens: z.number().optional(),
+      generationTimeMs: z.number().optional(),
+      generationTokensPerSecond: z.number().optional(),
+      promptTimeMs: z.number().optional(),
+      promptTokens: z.number().optional(),
+      promptTokensPerSecond: z.number().optional(),
+    })
+    .optional(),
 });
 
 export type MessageMetadata = z.infer<typeof messageMetadataSchema>;
 
-type weatherTool = InferUITool<typeof getWeather>;
-type createDocumentTool = InferUITool<ReturnType<typeof createDocument>>;
-type updateDocumentTool = InferUITool<ReturnType<typeof updateDocument>>;
-type requestSuggestionsTool = InferUITool<
-  ReturnType<typeof requestSuggestions>
->;
+export type ProviderTokenStats = NonNullable<MessageMetadata["providerStats"]>;
 
-export type ChatTools = {
-  getWeather: weatherTool;
-  createDocument: createDocumentTool;
-  updateDocument: updateDocumentTool;
-  requestSuggestions: requestSuggestionsTool;
+export type ChatStatus = "ready" | "submitted" | "streaming" | "error";
+
+export type TextUIPart = {
+  type: "text";
+  text: string;
 };
+
+export type ReasoningUIPart = {
+  type: "reasoning";
+  text: string;
+  state?: "streaming" | "done";
+};
+
+export type FileUIPart = {
+  type: "file";
+  url: string;
+  mediaType: string;
+  name?: string;
+  filename?: string;
+};
+
+export type WorkspaceScope = "conversation" | "shared";
+
+export type WorkspaceFileKind =
+  | "text"
+  | "code"
+  | "markdown"
+  | "image"
+  | "csv"
+  | "html_app"
+  | "binary";
+
+export type WorkspaceDisplayIntent = {
+  type: "workspace-file";
+  chatId: string;
+  scope: WorkspaceScope;
+  path: string;
+  title?: string;
+  mode?: "auto" | "text" | "code" | "markdown" | "image" | "csv" | "html_app";
+  line?: number;
+};
+
+export type WorkspaceChangeKind = "created" | "modified" | "deleted";
+
+export type WorkspaceFileNode = {
+  name: string;
+  path: string;
+  scope: WorkspaceScope;
+  kind: "directory" | "file";
+  fileKind?: WorkspaceFileKind;
+  size?: number;
+  mtime?: string;
+  children?: WorkspaceFileNode[];
+};
+
+export type WorkspaceChange = {
+  path: string;
+  scope: WorkspaceScope;
+  change: WorkspaceChangeKind;
+  fileKind?: WorkspaceFileKind;
+  size?: number;
+  mtime?: string;
+};
+
+export type PiToolUIPart = {
+  type: "tool-pi";
+  toolCallId: string;
+  toolName: string;
+  state:
+    | "input-streaming"
+    | "input-available"
+    | "output-available"
+    | "output-error";
+  input?: unknown;
+  inputText?: string;
+  output?: unknown;
+  displayIntent?: WorkspaceDisplayIntent;
+  errorText?: string;
+  isError?: boolean;
+};
+
+export type ChatMessagePart =
+  | TextUIPart
+  | ReasoningUIPart
+  | FileUIPart
+  | PiToolUIPart;
+
+export type ChatMessage = {
+  id: string;
+  role: "user" | "assistant" | "system";
+  parts: ChatMessagePart[];
+  metadata?: MessageMetadata;
+};
+
+export type SendMessage = (
+  message: {
+    id?: string;
+    role: "user";
+    parts: ChatMessagePart[];
+  },
+  options?: {
+    branchFromEntryId?: string | null;
+    onAccepted?: () => void;
+    replaceFromMessageId?: string;
+    restoreCheckpointId?: string;
+  }
+) => Promise<boolean>;
+
+export type SetMessages = (
+  messages: ChatMessage[] | ((messages: ChatMessage[]) => ChatMessage[])
+) => void;
 
 export type CustomUIDataTypes = {
   textDelta: string;
@@ -41,12 +149,6 @@ export type CustomUIDataTypes = {
   finish: null;
   "chat-title": string;
 };
-
-export type ChatMessage = UIMessage<
-  MessageMetadata,
-  CustomUIDataTypes,
-  ChatTools
->;
 
 export type Attachment = {
   name: string;

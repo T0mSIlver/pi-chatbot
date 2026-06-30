@@ -179,7 +179,7 @@ function Sidebar({
           data-sidebar="sidebar"
           data-slot="sidebar"
           data-mobile="true"
-          className="inset-x-0 bottom-0 top-auto h-[70dvh] w-full rounded-t-2xl border-t border-border/30 bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden"
+          className="inset-x-0 bottom-0 top-auto !h-[82dvh] max-h-[calc(100dvh_-_env(safe-area-inset-top)_-_0.75rem)] w-full overflow-hidden rounded-t-2xl border-t border-border/30 bg-sidebar p-0 pb-[env(safe-area-inset-bottom)] text-sidebar-foreground [&>button]:hidden"
           showCloseButton={false}
           side="bottom"
         >
@@ -188,7 +188,7 @@ function Sidebar({
             <SheetDescription>Displays the mobile sidebar.</SheetDescription>
           </SheetHeader>
           <div className="mx-auto mt-2 h-1 w-10 rounded-full bg-sidebar-foreground/20" />
-          <div className="flex h-full w-full flex-col overflow-y-auto pt-2">{children}</div>
+          <div className="flex h-full min-h-0 w-full flex-col overflow-hidden pt-2">{children}</div>
         </SheetContent>
       </Sheet>
     )
@@ -487,8 +487,8 @@ const sidebarMenuButtonVariants = cva(
           "bg-background shadow-[0_0_0_1px_hsl(var(--sidebar-border))] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground hover:shadow-[0_0_0_1px_hsl(var(--sidebar-accent))]",
       },
       size: {
-        default: "h-8 text-[13px]",
-        sm: "h-8 text-xs",
+        default: "h-10 text-[13px] md:h-8",
+        sm: "h-10 text-xs md:h-8",
         lg: "h-14 px-3 text-sm group-data-[collapsible=icon]:p-0!",
       },
     },

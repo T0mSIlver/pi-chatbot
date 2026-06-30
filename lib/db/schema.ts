@@ -1,8 +1,6 @@
 import type { InferSelectModel } from "drizzle-orm";
 import {
   boolean,
-  foreignKey,
-  json,
   pgTable,
   primaryKey,
   text,
@@ -25,112 +23,125 @@ export const user = pgTable("User", {
 
 export type User = InferSelectModel<typeof user>;
 
-export const chat = pgTable("Chat", {
+export const project = pgTable("Project", {
   id: uuid("id").primaryKey().notNull().defaultRandom(),
-  createdAt: timestamp("createdAt").notNull(),
-  title: text("title").notNull(),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+  updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+  name: text("name").notNull(),
   userId: uuid("userId")
     .notNull()
-    .references(() => user.id),
-  visibility: varchar("visibility", { enum: ["public", "private"] })
+    .references(() => user.id, { onDelete: "cascade" }),
+  workspacePath: text("workspacePath").notNull(),
+});
+
+export type Project = InferSelectModel<typeof project>;
+
+export const chat = pgTable("Chat", {
+  id: uuid("id").primaryKey().notNull().defaultRandom(),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+  updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+  title: text("title").notNull(),
+  summary: text("summary"),
+  projectId: uuid("projectId").references(() => project.id, {
+    onDelete: "cascade",
+  }),
+  userId: uuid("userId")
     .notNull()
-    .default("private"),
+    .references(() => user.id, { onDelete: "cascade" }),
+  workspacePath: text("workspacePath").notNull(),
+  piSessionFilePath: text("piSessionFilePath").notNull(),
 });
 
 export type Chat = InferSelectModel<typeof chat>;
 
-export const message = pgTable("Message_v2", {
-  id: uuid("id").primaryKey().notNull().defaultRandom(),
-  chatId: uuid("chatId")
+export const mcpConfig = pgTable("McpConfig", {
+  userId: uuid("userId")
+    .primaryKey()
     .notNull()
-    .references(() => chat.id),
-  role: varchar("role").notNull(),
-  parts: json("parts").notNull(),
-  attachments: json("attachments").notNull(),
-  createdAt: timestamp("createdAt").notNull(),
+    .references(() => user.id, { onDelete: "cascade" }),
+  json: text("json").notNull(),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+  updatedAt: timestamp("updatedAt").notNull().defaultNow(),
 });
 
-export type DBMessage = InferSelectModel<typeof message>;
+export type McpConfig = InferSelectModel<typeof mcpConfig>;
 
-export const vote = pgTable(
-  "Vote_v2",
+export const projectMcpServer = pgTable(
+  "ProjectMcpServer",
+  {
+    projectId: uuid("projectId")
+      .notNull()
+      .references(() => project.id, { onDelete: "cascade" }),
+    serverId: text("serverId").notNull(),
+    enabled: boolean("enabled").notNull().default(false),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.projectId, table.serverId] }),
+  })
+);
+
+export type ProjectMcpServer = InferSelectModel<typeof projectMcpServer>;
+
+export const chatMcpServerOverride = pgTable(
+  "ChatMcpServerOverride",
   {
     chatId: uuid("chatId")
       .notNull()
-      .references(() => chat.id),
-    messageId: uuid("messageId")
-      .notNull()
-      .references(() => message.id),
-    isUpvoted: boolean("isUpvoted").notNull(),
+      .references(() => chat.id, { onDelete: "cascade" }),
+    serverId: text("serverId").notNull(),
+    state: text("state").notNull(),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt").notNull().defaultNow(),
   },
   (table) => ({
-    pk: primaryKey({ columns: [table.chatId, table.messageId] }),
+    pk: primaryKey({ columns: [table.chatId, table.serverId] }),
   })
 );
 
-export type Vote = InferSelectModel<typeof vote>;
+export type ChatMcpServerOverride = InferSelectModel<
+  typeof chatMcpServerOverride
+>;
 
-export const document = pgTable(
-  "Document",
-  {
-    id: uuid("id").notNull().defaultRandom(),
-    createdAt: timestamp("createdAt").notNull(),
-    title: text("title").notNull(),
-    content: text("content"),
-    kind: varchar("text", { enum: ["text", "code", "image", "sheet"] })
-      .notNull()
-      .default("text"),
-    userId: uuid("userId")
-      .notNull()
-      .references(() => user.id),
-  },
-  (table) => ({
-    pk: primaryKey({ columns: [table.id, table.createdAt] }),
-  })
-);
+export type DBMessage = {
+  id: string;
+  chatId: string;
+  role: string;
+  parts: unknown;
+  attachments: unknown;
+  createdAt: Date;
+};
 
-export type Document = InferSelectModel<typeof document>;
+export type Vote = {
+  chatId: string;
+  messageId: string;
+  isUpvoted: boolean;
+};
 
-export const suggestion = pgTable(
-  "Suggestion",
-  {
-    id: uuid("id").notNull().defaultRandom(),
-    documentId: uuid("documentId").notNull(),
-    documentCreatedAt: timestamp("documentCreatedAt").notNull(),
-    originalText: text("originalText").notNull(),
-    suggestedText: text("suggestedText").notNull(),
-    description: text("description"),
-    isResolved: boolean("isResolved").notNull().default(false),
-    userId: uuid("userId")
-      .notNull()
-      .references(() => user.id),
-    createdAt: timestamp("createdAt").notNull(),
-  },
-  (table) => ({
-    pk: primaryKey({ columns: [table.id] }),
-    documentRef: foreignKey({
-      columns: [table.documentId, table.documentCreatedAt],
-      foreignColumns: [document.id, document.createdAt],
-    }),
-  })
-);
+export type Document = {
+  id: string;
+  createdAt: Date;
+  title: string;
+  content: string | null;
+  kind: "text" | "code" | "image" | "sheet";
+  userId: string;
+};
 
-export type Suggestion = InferSelectModel<typeof suggestion>;
+export type Suggestion = {
+  id: string;
+  documentId: string;
+  documentCreatedAt: Date;
+  originalText: string;
+  suggestedText: string;
+  description: string | null;
+  isResolved: boolean;
+  userId: string;
+  createdAt: Date;
+};
 
-export const stream = pgTable(
-  "Stream",
-  {
-    id: uuid("id").notNull().defaultRandom(),
-    chatId: uuid("chatId").notNull(),
-    createdAt: timestamp("createdAt").notNull(),
-  },
-  (table) => ({
-    pk: primaryKey({ columns: [table.id] }),
-    chatRef: foreignKey({
-      columns: [table.chatId],
-      foreignColumns: [chat.id],
-    }),
-  })
-);
-
-export type Stream = InferSelectModel<typeof stream>;
+export type Stream = {
+  id: string;
+  chatId: string;
+  createdAt: Date;
+};

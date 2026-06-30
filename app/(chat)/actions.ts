@@ -1,18 +1,10 @@
 "use server";
 
-import { generateText, type UIMessage } from "ai";
 import { cookies } from "next/headers";
 import { auth } from "@/app/(auth)/auth";
 import type { VisibilityType } from "@/components/chat/visibility-selector";
-import { titleModel } from "@/lib/ai/models";
-import { titlePrompt } from "@/lib/ai/prompts";
-import { getTitleModel } from "@/lib/ai/providers";
-import {
-  deleteMessagesByChatIdAfterTimestamp,
-  getChatById,
-  getMessageById,
-  updateChatVisibilityById,
-} from "@/lib/db/queries";
+import { getChatById, updateChatVisibilityById } from "@/lib/db/queries";
+import type { ChatMessage } from "@/lib/types";
 import { getTextFromMessage } from "@/lib/utils";
 
 export async function saveChatModelAsCookie(model: string) {
@@ -23,42 +15,20 @@ export async function saveChatModelAsCookie(model: string) {
 export async function generateTitleFromUserMessage({
   message,
 }: {
-  message: UIMessage;
+  message: ChatMessage;
 }) {
-  const { text } = await generateText({
-    model: getTitleModel(),
-    system: titlePrompt,
-    prompt: getTextFromMessage(message),
-    providerOptions: {
-      gateway: { order: titleModel.gatewayOrder },
-    },
-  });
+  await Promise.resolve();
+  const text = getTextFromMessage(message) || "New conversation";
   return text
     .replace(/^[#*"\s]+/, "")
     .replace(/["]+$/, "")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
 export async function deleteTrailingMessages({ id }: { id: string }) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    throw new Error("Unauthorized");
-  }
-
-  const [message] = await getMessageById({ id });
-  if (!message) {
-    throw new Error("Message not found");
-  }
-
-  const chat = await getChatById({ id: message.chatId });
-  if (!chat || chat.userId !== session.user.id) {
-    throw new Error("Unauthorized");
-  }
-
-  await deleteMessagesByChatIdAfterTimestamp({
-    chatId: message.chatId,
-    timestamp: message.createdAt,
-  });
+  await Promise.resolve();
+  throw new Error(`Message editing is disabled for Pi conversations (${id}).`);
 }
 
 export async function updateChatVisibility({
@@ -74,7 +44,7 @@ export async function updateChatVisibility({
   }
 
   const chat = await getChatById({ id: chatId });
-  if (!chat || chat.userId !== session.user.id) {
+  if (!chat) {
     throw new Error("Unauthorized");
   }
 

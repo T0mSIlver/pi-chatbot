@@ -25,6 +25,19 @@ const nextConfig: NextConfig = {
   devIndicators: false,
   poweredByHeader: false,
   reactCompiler: true,
+  serverExternalPackages: [
+    "@mariozechner/pi-ai",
+    "@mariozechner/pi-coding-agent",
+    "@mariozechner/clipboard",
+    // Must stay external: session.ts calls require.resolve("pi-mcp-adapter/...")
+    // and pi loads the adapter extension from its on-disk directory. If bundled,
+    // turbopack rewrites require.resolve to a numeric module id, so path.dirname
+    // receives a number and throws ("path must be a string, received number").
+    "pi-mcp-adapter",
+  ],
+  turbopack: {
+    root: process.cwd(),
+  },
   logging: {
     fetches: {
       fullUrl: false,
