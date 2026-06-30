@@ -3,10 +3,11 @@
 import equal from "fast-deep-equal";
 import {
   ArrowUpIcon,
-  BrainIcon,
-  EyeIcon,
+  ImageIcon,
   LockIcon,
-  WrenchIcon,
+  MicIcon,
+  SparklesIcon,
+  VideoIcon,
   XIcon,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -40,6 +41,7 @@ import {
   chatModels,
   DEFAULT_CHAT_MODEL,
   type ModelCapabilities,
+  type ModelModality,
 } from "@/lib/ai/models";
 import type {
   Attachment,
@@ -57,6 +59,7 @@ import {
   PromptInputTools,
 } from "../ai-elements/prompt-input";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { PaperclipIcon, StopIcon } from "./icons";
 import { PreviewAttachment } from "./preview-attachment";
 import {
@@ -598,7 +601,7 @@ function PureAttachmentsButton({
   const { data: modelsResponse } = useSWR(
     `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/models`,
     (url: string) => fetch(url).then((r) => r.json()),
-    { revalidateOnFocus: false, dedupingInterval: 3_600_000 }
+    { revalidateOnFocus: false, dedupingInterval: 300_000 }
   );
 
   const caps: Record<string, ModelCapabilities> | undefined =
@@ -628,6 +631,83 @@ function PureAttachmentsButton({
 
 const AttachmentsButton = memo(PureAttachmentsButton);
 
+function mergeModelLists(dynamicModels: ChatModel[] | undefined) {
+  const byId = new Map(chatModels.map((model) => [model.id, model]));
+
+  for (const model of dynamicModels ?? []) {
+    if (!byId.has(model.id)) {
+      byId.set(model.id, model);
+    }
+  }
+
+  return Array.from(byId.values());
+}
+
+function getCapabilityModalities(capabilities: ModelCapabilities | undefined) {
+  if (!capabilities) {
+    return [];
+  }
+
+  const modalities = new Set<ModelModality>([
+    ...(capabilities.inputModalities ?? []),
+    ...(capabilities.outputModalities ?? []),
+  ]);
+
+  if (capabilities.vision) {
+    modalities.add("image");
+  }
+  if (capabilities.audio) {
+    modalities.add("audio");
+  }
+  if (capabilities.video) {
+    modalities.add("video");
+  }
+
+  modalities.delete("text");
+
+  return Array.from(modalities);
+}
+
+function getCapabilityLabel(modality: ModelModality) {
+  switch (modality) {
+    case "image":
+      return "Vision";
+    case "audio":
+      return "Audio";
+    case "video":
+      return "Video";
+    default:
+      return `${modality.charAt(0).toUpperCase()}${modality.slice(1)}`;
+  }
+}
+
+function CapabilityIcon({ modality }: { modality: ModelModality }) {
+  const Icon =
+    modality === "image"
+      ? ImageIcon
+      : modality === "audio"
+        ? MicIcon
+        : modality === "video"
+          ? VideoIcon
+          : SparklesIcon;
+  const label = getCapabilityLabel(modality);
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          aria-label={label}
+          className="inline-flex size-3.5 items-center justify-center"
+          role="img"
+        >
+          <Icon aria-hidden={true} className="size-3.5" />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="top">{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 function PureModelSelectorCompact({
   selectedModelId,
   onModelChange,
@@ -639,19 +719,19 @@ function PureModelSelectorCompact({
   const { data: modelsData } = useSWR(
     `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/models`,
     (url: string) => fetch(url).then((r) => r.json()),
-    { revalidateOnFocus: false, dedupingInterval: 3_600_000 }
+    { revalidateOnFocus: false, dedupingInterval: 300_000 }
   );
 
   const capabilities: Record<string, ModelCapabilities> | undefined =
     modelsData?.capabilities ?? modelsData;
   const dynamicModels: ChatModel[] | undefined = modelsData?.models;
-  const activeModels = dynamicModels ?? chatModels;
+  const allModels = mergeModelLists(dynamicModels);
 
   const selectedModel =
-    activeModels.find((m: ChatModel) => m.id === selectedModelId) ??
-    activeModels.find((m: ChatModel) => m.id === DEFAULT_CHAT_MODEL) ??
-    activeModels[0];
-  const [provider] = selectedModel.id.split("/");
+    allModels.find((m: ChatModel) => m.id === selectedModelId) ??
+    allModels.find((m: ChatModel) => m.id === DEFAULT_CHAT_MODEL) ??
+    allModels[0];
+  const provider = selectedModel.provider ?? selectedModel.id.split("/")[0];
 
   return (
     <ModelSelector onOpenChange={setOpen} open={open}>
@@ -670,12 +750,6 @@ function PureModelSelectorCompact({
         <ModelSelectorList>
           {(() => {
             const curatedIds = new Set(chatModels.map((m) => m.id));
-            const allModels = dynamicModels
-              ? [
-                  ...chatModels,
-                  ...dynamicModels.filter((m) => !curatedIds.has(m.id)),
-                ]
-              : chatModels;
 
             const grouped: Record<
               string,
@@ -715,6 +789,8 @@ function PureModelSelectorCompact({
               meta: "Meta",
               minimax: "MiniMax",
               mistral: "Mistral",
+              llama: "llama.cpp",
+              llamacpp: "llama.cpp",
               moonshotai: "Moonshot",
               morph: "Morph",
               nvidia: "Nvidia",
@@ -736,7 +812,12 @@ function PureModelSelectorCompact({
                 key={key}
               >
                 {grouped[key].map(({ model, curated }) => {
-                  const logoProvider = model.id.split("/")[0];
+                  const logoProvider =
+                    model.provider ?? model.id.split("/")[0];
+                  const modelCapabilities = capabilities?.[model.id];
+                  const capabilityModalities =
+                    getCapabilityModalities(modelCapabilities);
+
                   return (
                     <ModelSelectorItem
                       className={cn(
@@ -766,15 +847,12 @@ function PureModelSelectorCompact({
                       <ModelSelectorLogo provider={logoProvider} />
                       <ModelSelectorName>{model.name}</ModelSelectorName>
                       <div className="ml-auto flex items-center gap-2 text-foreground/70">
-                        {capabilities?.[model.id]?.tools && (
-                          <WrenchIcon className="size-3.5" />
-                        )}
-                        {capabilities?.[model.id]?.vision && (
-                          <EyeIcon className="size-3.5" />
-                        )}
-                        {capabilities?.[model.id]?.reasoning && (
-                          <BrainIcon className="size-3.5" />
-                        )}
+                        {capabilityModalities.map((modality) => (
+                          <CapabilityIcon
+                            key={`${model.id}-${modality}`}
+                            modality={modality}
+                          />
+                        ))}
                         {!curated && (
                           <LockIcon className="size-3 text-muted-foreground/50" />
                         )}
