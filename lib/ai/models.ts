@@ -1,6 +1,8 @@
+import piModelsConfig from "@/config/pi-models.json";
+
 export const DEFAULT_CHAT_MODEL = "llamacpp/qwen36dense-27b";
 export const DEFAULT_LLAMA_CPP_BASE_URL = "http://192.168.1.183:8080/v1";
-const LLAMA_CPP_FETCH_TIMEOUT_MS = 2_000;
+const LLAMA_CPP_FETCH_TIMEOUT_MS = 2000;
 
 export const titleModel = {
   id: DEFAULT_CHAT_MODEL,
@@ -14,7 +16,7 @@ export type ModelModality =
   | "image"
   | "audio"
   | "video"
-  // oxlint-disable-next-line typescript-eslint(ban-types) -- allow future server-defined modality names
+  // Allow future server-defined modality names beyond the known set.
   | (string & {});
 
 export type ModelCapabilities = {
@@ -112,6 +114,39 @@ function createModelCapabilities({
 
 const emptyCapabilities = createModelCapabilities();
 
+/**
+ * Capabilities known at build time from the bundled `config/pi-models.json`
+ * (the same file the model registry loads). These are the source of truth when
+ * the live llama.cpp probe is unreachable, times out, or doesn't report
+ * modality metadata — so a transient probe failure never silently disables
+ * image upload for a model the config already declares as vision-capable.
+ */
+function buildBaselineCapabilities(): Record<string, ModelCapabilities> {
+  const entries: [string, ModelCapabilities][] = [];
+
+  for (const [provider, providerConfig] of Object.entries(
+    piModelsConfig.providers ?? {}
+  )) {
+    for (const model of providerConfig.models ?? []) {
+      const inputModalities = normalizeModalities(model.input);
+
+      entries.push([
+        `${provider}/${model.id}`,
+        createModelCapabilities({
+          inputModalities:
+            inputModalities.length > 0 ? inputModalities : ["text"],
+          reasoning: Boolean(model.reasoning),
+          tools: true,
+        }),
+      ]);
+    }
+  }
+
+  return Object.fromEntries(entries);
+}
+
+const baselineCapabilities = buildBaselineCapabilities();
+
 type LlamaCppModel = {
   id: string;
   object?: string;
@@ -177,10 +212,18 @@ export async function getCapabilities(): Promise<
   const serverCapabilities = await getLlamaCppModelCapabilities();
 
   return Object.fromEntries(
-    chatModels.map((model) => [
-      model.id,
-      serverCapabilities[getServerModelId(model.id)] ?? emptyCapabilities,
-    ])
+    chatModels.map((model) => {
+      const live = serverCapabilities[getServerModelId(model.id)];
+      // Only trust the live probe when it actually reported modalities;
+      // otherwise fall back to the config-declared baseline so a missing or
+      // mismatched probe response can't strip a model's known capabilities.
+      const liveHasModalities =
+        live !== undefined &&
+        (live.inputModalities.length > 0 || live.outputModalities.length > 0);
+      const baseline = baselineCapabilities[model.id] ?? emptyCapabilities;
+
+      return [model.id, liveHasModalities ? live : baseline];
+    })
   );
 }
 
