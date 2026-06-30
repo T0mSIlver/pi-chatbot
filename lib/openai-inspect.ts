@@ -148,6 +148,12 @@ export type StreamEvent = {
   toolCalls?: OpenAIToolCall[];
   finishReason?: string;
   usage?: unknown;
+  // In-band error payloads (e.g. `data: {"error":{...}}`) that some providers
+  // emit mid-stream on a 200 response.
+  error?: unknown;
+  // Parsed JSON for events that carry no field we recognize, so the UI can
+  // render the shape instead of a blank row.
+  data?: unknown;
   isDone: boolean;
   parseError?: boolean;
 };
@@ -159,6 +165,7 @@ export type CollectedContent = {
   toolCalls: { id?: string; name?: string; arguments: string }[];
   finishReason?: string;
   usage?: unknown;
+  error?: unknown;
 };
 
 export type ResponseMeta = {
@@ -196,7 +203,12 @@ function looksLikeSse(
   return /^data:/m.test(rawBody);
 }
 
-function splitSsePayloads(rawBody: string): string[] {
+/**
+ * Splits an SSE body into the raw payloads carried by its `data:` lines. Shared
+ * with the provider-stats extractor so the wire-format parsing lives in one
+ * place.
+ */
+export function splitSsePayloads(rawBody: string): string[] {
   return rawBody
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -220,7 +232,7 @@ function parseStreamEvent(payload: string, index: number): StreamEvent {
   const choice = asRecord(asArray(root.choices)?.[0]);
   const delta = asRecord(choice?.delta);
 
-  return {
+  const event: StreamEvent = {
     index,
     raw: payload,
     isDone: false,
@@ -230,7 +242,25 @@ function parseStreamEvent(payload: string, index: number): StreamEvent {
     toolCalls: asArray(delta?.tool_calls) as OpenAIToolCall[] | undefined,
     finishReason: asString(choice?.finish_reason),
     usage: root.usage,
+    error: root.error,
   };
+
+  // Providers can stream an error chunk or an unexpected shape on an otherwise
+  // 200 response. Keep the parsed JSON so the UI renders it instead of a blank
+  // row that wrongly reads as "no content".
+  const hasKnownField =
+    event.role !== undefined ||
+    event.content !== undefined ||
+    event.reasoning !== undefined ||
+    (event.toolCalls?.length ?? 0) > 0 ||
+    event.finishReason !== undefined ||
+    event.usage !== undefined ||
+    event.error !== undefined;
+  if (!hasKnownField) {
+    event.data = json;
+  }
+
+  return event;
 }
 
 function collectStreamEvents(events: StreamEvent[]): CollectedContent {
@@ -255,6 +285,9 @@ function collectStreamEvents(events: StreamEvent[]): CollectedContent {
     }
     if (event.usage !== undefined) {
       collected.usage = event.usage;
+    }
+    if (event.error !== undefined && collected.error === undefined) {
+      collected.error = event.error;
     }
     if (event.toolCalls) {
       const eventToolCalls: OpenAIToolCall[] = event.toolCalls;
@@ -318,7 +351,13 @@ export function parseInspectorResponse(
   const bodyRecord = asRecord(response.body);
 
   if (bodyRecord) {
-    if (meta.status >= 400 || bodyRecord.error !== undefined) {
+    // Treat the body as an error only when there is an actual error to show: a
+    // 4xx/5xx status, or a non-null `error` field. Some providers include an
+    // explicit `"error": null` on a successful 200 body, which must still render
+    // as a normal message.
+    const hasErrorField =
+      bodyRecord.error !== undefined && bodyRecord.error !== null;
+    if (meta.status >= 400 || hasErrorField) {
       return {
         kind: "error-body",
         error: bodyRecord.error ?? bodyRecord,
@@ -388,13 +427,14 @@ export type CopyContext = {
  */
 export function buildCopyPayload(
   capture: ProviderCaptureRecord,
-  context: CopyContext
+  context: CopyContext,
+  parsedResponse?: ParsedResponse
 ): string {
   if (context.tab === "request") {
     return stableStringify(capture.request.body ?? capture.request);
   }
 
-  const parsed = parseInspectorResponse(capture);
+  const parsed = parsedResponse ?? parseInspectorResponse(capture);
   if (parsed.kind === "stream") {
     if (context.responseMode === "collected") {
       const text = collectedToText(parsed.collected);

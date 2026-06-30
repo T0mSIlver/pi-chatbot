@@ -497,10 +497,17 @@ function CollectedView({ collected }: { collected: CollectedContent }) {
   const isEmpty =
     collected.text.length === 0 &&
     collected.reasoning.length === 0 &&
-    collected.toolCalls.length === 0;
+    collected.toolCalls.length === 0 &&
+    collected.error === undefined;
 
   return (
     <div className="flex flex-col gap-3">
+      {collected.error !== undefined && (
+        <Banner title="Provider error in stream" tone="error">
+          <StructuredValue value={collected.error} />
+        </Banner>
+      )}
+
       {collected.reasoning.length > 0 && (
         <Collapsible defaultOpen title="Reasoning">
           <p className="whitespace-pre-wrap break-words text-muted-foreground text-sm leading-relaxed">
@@ -600,6 +607,16 @@ function StreamEventRow({ event }: { event: StreamEvent }) {
                 {item.function?.arguments ?? ""}
               </span>
             ))}
+          </div>
+        )}
+        {event.error !== undefined && (
+          <div className="rounded border border-destructive/40 bg-destructive/5 p-2 text-destructive text-xs">
+            <StructuredValue value={event.error} />
+          </div>
+        )}
+        {event.data !== undefined && (
+          <div className="rounded border border-border bg-muted/20 p-2 text-xs">
+            <StructuredValue value={event.data} />
           </div>
         )}
         {tags.length > 0 && (

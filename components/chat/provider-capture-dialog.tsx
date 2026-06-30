@@ -80,10 +80,24 @@ function statusVariant(capture: ProviderCaptureRecord, recovered: boolean) {
  * flag those so the UI can present them as recovered rather than alarming
  * "errors" the user never saw in the chat.
  */
+function isRecoveringSuccess(capture: ProviderCaptureRecord) {
+  const { response } = capture;
+  // A capture only proves the turn recovered if it actually produced a usable
+  // response: a 2xx/3xx status AND a body we could read. A 200 that recorded
+  // only `bodyReadError` (the stream dropped after headers) yielded no output,
+  // so it must not mask an earlier genuine failure as "recovered".
+  return Boolean(
+    !capture.error &&
+      response &&
+      response.status < 400 &&
+      !response.bodyReadError
+  );
+}
+
 function computeRecoveredIds(captures: ProviderCaptureRecord[]) {
   const latestSuccessIndex = new Map<string, number>();
   for (const capture of captures) {
-    if (capture.response && capture.response.status < 400) {
+    if (isRecoveringSuccess(capture)) {
       const key = `${capture.assistantMessageId}|${capture.purpose}`;
       const previous = latestSuccessIndex.get(key) ?? Number.NEGATIVE_INFINITY;
       if (capture.requestIndex > previous) {
@@ -154,15 +168,22 @@ export function ProviderCaptureDialog({
     }
   }, [captures, selectedId]);
 
+  // Reset the response view to its default whenever a different capture is
+  // inspected, so a "Chunks" choice on one capture doesn't leak into the next.
+  useEffect(() => {
+    setResponseMode("collected");
+  }, [selectedCapture?.id]);
+
   const copySelected = useCallback(async () => {
     if (!selectedCapture) {
       return;
     }
 
-    const text = buildCopyPayload(selectedCapture, {
-      tab: activeTab,
-      responseMode,
-    });
+    const text = buildCopyPayload(
+      selectedCapture,
+      { tab: activeTab, responseMode },
+      parsedResponse
+    );
 
     try {
       await copyTextToClipboard(text);
@@ -170,7 +191,7 @@ export function ProviderCaptureDialog({
     } catch {
       toast.error("Could not copy to clipboard");
     }
-  }, [activeTab, responseMode, selectedCapture]);
+  }, [activeTab, responseMode, selectedCapture, parsedResponse]);
 
   const downloadSelected = useCallback(() => {
     if (!selectedCapture) {
