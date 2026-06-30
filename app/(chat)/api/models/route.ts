@@ -2,7 +2,7 @@ import { chatModels, getCapabilities } from "@/lib/ai/models";
 
 export async function GET() {
   const headers = {
-    "Cache-Control": "public, max-age=86400, s-maxage=86400",
+    "Cache-Control": "public, max-age=300, s-maxage=300",
   };
 
   const capabilities = await getCapabilities();
