@@ -153,6 +153,7 @@ const PurePreviewMessage = ({
     />
   );
   const stats = message.metadata?.providerStats;
+  const isInterrupted = isAssistant && message.metadata?.interrupted === true;
 
   const content = isThinking ? (
     <div className="flex h-[calc(13px*1.65)] items-center text-[13px] leading-[1.65]">
@@ -164,6 +165,14 @@ const PurePreviewMessage = ({
     <>
       {attachments}
       {parts}
+      {isInterrupted && (
+        <div
+          className="text-[12px] text-muted-foreground/80 italic"
+          data-testid="message-interrupted"
+        >
+          Generation was interrupted — regenerate to continue.
+        </div>
+      )}
       {actions}
     </>
   );

@@ -7,6 +7,7 @@ import { allowedModelIds, DEFAULT_CHAT_MODEL } from "@/lib/ai/models";
 import { isTestEnvironment } from "@/lib/constants";
 import {
   deleteChatById,
+  deleteRunsByChatId,
   ensureLocalNetworkUser,
   getChatById,
   getProjectById,
@@ -25,6 +26,7 @@ import {
   readProviderCaptures,
 } from "@/lib/pi/provider-captures";
 import { applyProviderStatsToMessages } from "@/lib/pi/provider-stats";
+import { runPersistence } from "@/lib/pi/run-persistence";
 import { createPiSdkSession } from "@/lib/pi/session";
 import {
   ensureConversationWorkspace,
@@ -49,7 +51,10 @@ import type { ChatMessage } from "@/lib/types";
 import { generateUUID, getTextFromMessage } from "@/lib/utils";
 import { type PostRequestBody, postRequestBodySchema } from "./schema";
 
-export const maxDuration = 300;
+// No `maxDuration`: this runs on a long-lived self-hosted Node server, not
+// Vercel serverless, and generation is driven by a detached producer
+// (startChatRun) that outlives the request. A run is bounded by the model/step
+// loop, not by request duration.
 
 function contentToText(content: unknown) {
   if (typeof content === "string") {
@@ -918,6 +923,7 @@ export async function POST(request: Request) {
     ? requestBody.selectedChatModel
     : DEFAULT_CHAT_MODEL;
   const assistantMessageId = requestBody.assistantMessageId ?? generateUUID();
+  const runId = generateUUID();
 
   const run = startChatRun({
     assistantMessageId,
@@ -928,6 +934,8 @@ export async function POST(request: Request) {
       existingMessages: [],
       message: requestBody.message,
     }),
+    persistence: runPersistence,
+    runId,
     producer: (activeRun) =>
       producePiChatRun({
         assistantMessageId,
@@ -976,6 +984,7 @@ export async function DELETE(request: Request) {
   }
 
   const deletedChat = await deleteChatById({ id });
+  await deleteRunsByChatId({ chatId: id });
 
   if (deletedChat) {
     await moveWorkspaceToTrash(rebaseWorkspacePath(deletedChat.workspacePath));
