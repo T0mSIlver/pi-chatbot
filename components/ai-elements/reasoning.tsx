@@ -1,6 +1,6 @@
 "use client";
 
-import type { ComponentProps, HTMLAttributes, ReactNode } from "react";
+import type { ComponentProps, HTMLAttributes } from "react";
 
 import { useControllableState } from "@radix-ui/react-use-controllable-state";
 import {
@@ -24,8 +24,6 @@ import {
   useState,
 } from "react";
 import { Streamdown } from "streamdown";
-
-import { Shimmer } from "./shimmer";
 
 interface ReasoningContextValue {
   isStreaming: boolean;
@@ -67,8 +65,7 @@ export const Reasoning = memo(
     ...props
   }: ReasoningProps) => {
     const resolvedDefaultOpen = defaultOpen ?? isStreaming;
-    // Track if defaultOpen was explicitly set to false (to prevent auto-open)
-    const isExplicitlyClosed = defaultOpen === false;
+    const shouldAutoManageStreaming = defaultOpen !== false;
 
     const [isOpen, setIsOpen] = useControllableState<boolean>({
       defaultProp: resolvedDefaultOpen,
@@ -97,20 +94,21 @@ export const Reasoning = memo(
       }
     }, [isStreaming, setDuration]);
 
-    // Auto-open when streaming starts (unless explicitly closed)
+    // Auto-open when streaming starts unless this is a manual preview.
     useEffect(() => {
-      if (isStreaming && !isOpen && !isExplicitlyClosed) {
+      if (isStreaming && !isOpen && shouldAutoManageStreaming) {
         setIsOpen(true);
       }
-    }, [isStreaming, isOpen, setIsOpen, isExplicitlyClosed]);
+    }, [isStreaming, isOpen, setIsOpen, shouldAutoManageStreaming]);
 
-    // Auto-close when streaming ends (once only, and only if it ever streamed)
+    // Auto-close when streaming ends only for the legacy auto-managed mode.
     useEffect(() => {
       if (
         hasEverStreamedRef.current &&
         !isStreaming &&
         isOpen &&
-        !hasAutoClosed
+        !hasAutoClosed &&
+        shouldAutoManageStreaming
       ) {
         const timer = setTimeout(() => {
           setIsOpen(false);
@@ -119,7 +117,13 @@ export const Reasoning = memo(
 
         return () => clearTimeout(timer);
       }
-    }, [isStreaming, isOpen, setIsOpen, hasAutoClosed]);
+    }, [
+      isStreaming,
+      isOpen,
+      setIsOpen,
+      hasAutoClosed,
+      shouldAutoManageStreaming,
+    ]);
 
     const handleOpenChange = useCallback(
       (newOpen: boolean) => {
@@ -151,42 +155,68 @@ export const Reasoning = memo(
 export type ReasoningTriggerProps = ComponentProps<
   typeof CollapsibleTrigger
 > & {
-  getThinkingMessage?: (isStreaming: boolean, duration?: number) => ReactNode;
+  preview?: string;
 };
 
-const defaultGetThinkingMessage = (isStreaming: boolean, duration?: number) => {
-  if (isStreaming || duration === 0) {
-    return <Shimmer className="font-medium" duration={1}>Thinking...</Shimmer>;
+const PREVIEW_CHARACTER_LIMIT = 260;
+
+function getReasoningPreview(preview: string | undefined, fromEnd = false) {
+  const text = preview?.replace(/\s+/g, " ").trim();
+  if (!text) {
+    return "Thinking...";
   }
-  if (duration === undefined) {
-    return <p>Thought for a few seconds</p>;
+  if (text.length <= PREVIEW_CHARACTER_LIMIT) {
+    return text;
   }
-  return <p>Thought for {duration} seconds</p>;
-};
+  if (fromEnd) {
+    return `...${text.slice(-PREVIEW_CHARACTER_LIMIT).trimStart()}`;
+  }
+  return `${text.slice(0, PREVIEW_CHARACTER_LIMIT).trimEnd()}...`;
+}
 
 export const ReasoningTrigger = memo(
   ({
     className,
     children,
-    getThinkingMessage = defaultGetThinkingMessage,
+    preview,
     ...props
   }: ReasoningTriggerProps) => {
-    const { isStreaming, isOpen, duration } = useReasoning();
+    const { isOpen, isStreaming } = useReasoning();
+    const previewText = getReasoningPreview(preview, isStreaming);
+    const triggerText = isOpen ? "Reasoning" : previewText;
 
     return (
       <CollapsibleTrigger
+        aria-label={isOpen ? "Collapse reasoning" : "Expand reasoning"}
         className={cn(
-          "flex w-full items-center gap-2 text-muted-foreground text-[13px] leading-[1.65] transition-colors hover:text-foreground",
+          "group/reasoning relative flex w-full items-start gap-2 overflow-hidden rounded-md py-1.5 pr-2 pl-3 text-left text-[13px] text-muted-foreground/65 leading-[1.65] transition-colors hover:bg-muted/25 hover:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/60",
           className
         )}
         {...props}
       >
         {children ?? (
           <>
-            {getThinkingMessage(isStreaming, duration)}
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-y-1 left-0 w-px bg-gradient-to-b from-transparent via-muted-foreground/30 to-transparent"
+            />
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-y-0 left-0 w-16 -translate-x-full bg-gradient-to-r from-transparent via-foreground/10 to-transparent opacity-0 transition-all duration-700 group-hover/reasoning:translate-x-[520%] group-hover/reasoning:opacity-100"
+            />
+            <span
+              className={cn(
+                "min-w-0 flex-1 whitespace-pre-wrap break-words",
+                !isOpen && "line-clamp-2",
+                isOpen && "font-medium text-muted-foreground/75",
+                isStreaming && !isOpen && "animate-pulse"
+              )}
+            >
+              {triggerText}
+            </span>
             <ChevronDownIcon
               className={cn(
-                "size-4 transition-transform",
+                "mt-0.5 size-4 shrink-0 text-muted-foreground/50 transition-transform",
                 isOpen ? "rotate-180" : "rotate-0"
               )}
             />
