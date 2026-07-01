@@ -1,6 +1,6 @@
 "use client";
 
-import type { ComponentProps, HTMLAttributes } from "react";
+import type { ComponentProps, HTMLAttributes, MouseEvent } from "react";
 
 import { useControllableState } from "@radix-ui/react-use-controllable-state";
 import {
@@ -24,6 +24,7 @@ import {
   useState,
 } from "react";
 import { Streamdown } from "streamdown";
+import { MarkdownTable } from "./markdown-table";
 
 interface ReasoningContextValue {
   isStreaming: boolean;
@@ -159,12 +160,28 @@ export type ReasoningTriggerProps = ComponentProps<
 };
 
 const streamdownPlugins = { cjk, code, math, mermaid };
+const markdownComponents = {
+  table: MarkdownTable,
+};
+
+function getReasoningPreviewLine(preview: string | undefined) {
+  return (
+    preview
+      ?.split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean) ?? "Thinking..."
+  );
+}
 
 function ReasoningMarkdown({
   className,
+  streamdownClassName,
   text,
   ...props
-}: HTMLAttributes<HTMLDivElement> & { text: string }) {
+}: HTMLAttributes<HTMLDivElement> & {
+  streamdownClassName?: string;
+  text: string;
+}) {
   return (
     <div
       className={cn(
@@ -176,7 +193,14 @@ function ReasoningMarkdown({
       )}
       {...props}
     >
-      <Streamdown plugins={streamdownPlugins}>{text}</Streamdown>
+      <Streamdown
+        className={streamdownClassName}
+        components={markdownComponents}
+        controls={{ code: true, mermaid: true, table: false }}
+        plugins={streamdownPlugins}
+      >
+        {text}
+      </Streamdown>
     </div>
   );
 }
@@ -189,7 +213,7 @@ export const ReasoningTrigger = memo(
     ...props
   }: ReasoningTriggerProps) => {
     const { isOpen, isStreaming } = useReasoning();
-    const previewText = preview?.trim() ? preview : "Thinking...";
+    const previewText = getReasoningPreviewLine(preview);
 
     if (isOpen) {
       return null;
@@ -205,14 +229,14 @@ export const ReasoningTrigger = memo(
         {children ?? (
           <div
             className={cn(
-              "relative max-h-[3.4rem] overflow-hidden",
+              "relative h-[1lh] overflow-hidden text-[13px] leading-[1.65]",
               isStreaming && "animate-pulse"
             )}
           >
-            <ReasoningMarkdown text={previewText} />
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-background to-transparent"
+            <ReasoningMarkdown
+              className="line-clamp-1 overflow-hidden"
+              streamdownClassName="!space-y-0 [&_*]:my-0 [&_h1]:inline [&_h2]:inline [&_h3]:inline [&_h4]:inline [&_h5]:inline [&_h6]:inline [&_p]:inline"
+              text={previewText}
             />
           </div>
         )}
@@ -234,7 +258,7 @@ export type ReasoningContentProps = HTMLAttributes<HTMLDivElement> & {
 
 export const ReasoningContent = memo(
   ({ className, children, ...props }: ReasoningContentProps) => {
-    const { isStreaming, isOpen } = useReasoning();
+    const { isStreaming, isOpen, setIsOpen } = useReasoning();
     const scrollRef = useRef<HTMLDivElement>(null);
     useEffect(() => {
       if (isStreaming && scrollRef.current) {
@@ -244,12 +268,30 @@ export const ReasoningContent = memo(
 
     if (!isOpen) return null;
 
+    const handleContentClick = (event: MouseEvent<HTMLDivElement>) => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest("a,button,input,select,textarea,[role='button']")
+      ) {
+        return;
+      }
+      if (window.getSelection()?.toString()) {
+        return;
+      }
+      if (event.defaultPrevented) {
+        return;
+      }
+      setIsOpen(false);
+    };
+
     return (
       <div
         className={cn(
-          "group/reasoning-content relative animate-in fade-in-0 duration-200 [overflow-anchor:none]",
+          "group/reasoning-content relative cursor-pointer animate-in fade-in-0 duration-200 [overflow-anchor:none]",
           className
         )}
+        onClick={handleContentClick}
       >
         <div
           className="max-h-[260px] overflow-y-auto rounded-md px-2 py-1.5"

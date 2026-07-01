@@ -29,7 +29,8 @@ import {
   useMemo,
   useState,
 } from "react";
-import { Streamdown } from "streamdown";
+import { type Components, Streamdown } from "streamdown";
+import { MarkdownTable } from "./markdown-table";
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
   from: UIMessage["role"];
@@ -321,14 +322,19 @@ export const MessageBranchPage = ({
 export type MessageResponseProps = ComponentProps<typeof Streamdown>;
 
 const streamdownPlugins = { cjk, code, math, mermaid };
+const markdownComponents = {
+  table: MarkdownTable,
+} satisfies Components;
 
 export const MessageResponse = memo(
-  ({ className, ...props }: MessageResponseProps) => (
+  ({ className, components, ...props }: MessageResponseProps) => (
     <Streamdown
       className={cn(
         "size-full min-w-0 overflow-hidden [overflow-wrap:anywhere] [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto",
         className
       )}
+      components={{ ...components, ...markdownComponents }}
+      controls={{ code: true, mermaid: true, table: false }}
       plugins={streamdownPlugins}
       {...props}
     />
