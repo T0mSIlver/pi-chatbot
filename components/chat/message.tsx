@@ -11,7 +11,6 @@ import {
   ToolInput,
   ToolOutput,
 } from "../ai-elements/tool";
-import { SparklesIcon } from "./icons";
 import { MessageActions } from "./message-actions";
 import { MessageReasoning } from "./message-reasoning";
 import { renderPiToolSpecializedAction } from "./pi-tool-specializations";
@@ -181,18 +180,11 @@ const PurePreviewMessage = ({
         className={cn(
           isUser
             ? "flex min-w-0 flex-col items-end gap-2"
-            : "flex min-w-0 items-start gap-2 md:gap-3"
+            : "flex min-w-0 flex-col items-start"
         )}
       >
-        {isAssistant && (
-          <div className="flex h-[calc(13px*1.65)] shrink-0 items-center">
-            <div className="flex size-7 items-center justify-center rounded-lg bg-muted/60 text-muted-foreground ring-1 ring-border/50">
-              <SparklesIcon size={13} />
-            </div>
-          </div>
-        )}
         {isAssistant ? (
-          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+          <div className="flex w-full min-w-0 flex-col gap-2">
             {content}
             {stats && isFinalAssistantAnswer && (
               <ProviderStatsToggle stats={stats} />
@@ -215,13 +207,7 @@ export const ThinkingMessage = () => {
       data-role="assistant"
       data-testid="message-assistant-loading"
     >
-      <div className="flex items-start gap-3">
-        <div className="flex h-[calc(13px*1.65)] shrink-0 items-center">
-          <div className="flex size-7 items-center justify-center rounded-lg bg-muted/60 text-muted-foreground ring-1 ring-border/50">
-            <SparklesIcon size={13} />
-          </div>
-        </div>
-
+      <div className="flex min-w-0 flex-col items-start">
         <div className="flex h-[calc(13px*1.65)] items-center text-[13px] leading-[1.65]">
           <Shimmer className="font-medium" duration={1}>
             Thinking...
