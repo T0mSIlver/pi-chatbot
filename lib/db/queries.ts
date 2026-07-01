@@ -1133,7 +1133,7 @@ export async function markRunInterrupted(args: { id: string }) {
       finishedAt: new Date(),
       updatedAt: new Date(),
     })
-    .where(eq(stream.id, args.id));
+    .where(and(eq(stream.id, args.id), eq(stream.status, "active")));
 }
 
 export async function deleteRunsByChatId(args: { chatId: string }) {

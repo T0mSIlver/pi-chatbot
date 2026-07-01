@@ -60,10 +60,10 @@ export function createRunPersistence(): RunPersistence {
     onTerminal: ({ runId, assistantMessageId }, status, error, messages) => {
       lastCheckpointAt.delete(runId);
       // Keep a partial only for abnormal endings; a completed run is already
-      // fully in the JSONL transcript.
+      // fully in the JSONL transcript, so clear any checkpointed partial.
       const partial =
         status === "completed"
-          ? undefined
+          ? null
           : (inflightAssistantMessage(messages, assistantMessageId) ?? null);
       enqueue(runId, () =>
         markRunTerminal({ id: runId, status, error, partial })
