@@ -28,6 +28,7 @@ import {
 import { applyProviderStatsToMessages } from "@/lib/pi/provider-stats";
 import { runPersistence } from "@/lib/pi/run-persistence";
 import { createPiSdkSession } from "@/lib/pi/session";
+import { previewToolOutput } from "@/lib/pi/tool-output";
 import {
   ensureConversationWorkspace,
   ensureProjectWorkspace,
@@ -71,15 +72,6 @@ function contentToText(content: unknown) {
     .filter((block) => block.type === "text" && typeof block.text === "string")
     .map((block) => block.text)
     .join("");
-}
-
-function previewToolOutput(value: unknown) {
-  const text =
-    typeof value === "string" ? value : JSON.stringify(value ?? "", null, 2);
-  if (text.length <= 8000) {
-    return value;
-  }
-  return `${text.slice(0, 8000)}\n\n[truncated for display]`;
 }
 
 function createInitialConversationTitle(message: PostRequestBody["message"]) {
@@ -817,7 +809,7 @@ async function producePiChatRun({
           toolName: event.toolName,
           output: displayIntent
             ? text || "Opened in the preview pane."
-            : previewToolOutput(event.result?.details ?? text),
+            : previewToolOutput(text || event.result?.details),
           displayIntent: displayIntent ?? undefined,
           errorText: event.isError ? text || "Tool failed" : undefined,
           isError: event.isError,

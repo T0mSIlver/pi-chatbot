@@ -273,6 +273,10 @@ function formatToolValue(value: unknown) {
   }
 }
 
+function isEmptyToolValue(value: unknown) {
+  return value === undefined || value === null || value === "";
+}
+
 const ToolValueBlock = ({
   tone = "default",
   value,
@@ -319,6 +323,10 @@ export const ToolInput = ({
   const value = input ?? parsedInputText;
   const displayValue = value ?? inputText ?? "";
 
+  if (isEmptyToolValue(displayValue)) {
+    return null;
+  }
+
   return (
     <div className={cn("min-w-0 overflow-hidden", className)} {...props}>
       <ToolValueBlock tone="muted" value={displayValue} />
@@ -337,7 +345,9 @@ export const ToolOutput = ({
   errorText,
   ...props
 }: ToolOutputProps) => {
-  if (!(output || errorText)) {
+  const displayValue = errorText ?? output;
+
+  if (isEmptyToolValue(displayValue)) {
     return null;
   }
 
@@ -345,7 +355,7 @@ export const ToolOutput = ({
     <div className={cn("min-w-0 overflow-hidden", className)} {...props}>
       <ToolValueBlock
         tone={errorText ? "error" : "default"}
-        value={errorText ?? output}
+        value={displayValue}
       />
     </div>
   );
