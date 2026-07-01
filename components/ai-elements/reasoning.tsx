@@ -164,12 +164,12 @@ const markdownComponents = {
   table: MarkdownTable,
 };
 
-function getReasoningPreviewLine(preview: string | undefined) {
+function getReasoningPreviewLines(preview: string | undefined) {
   return (
     preview
       ?.split(/\r?\n/)
       .map((line) => line.trim())
-      .find(Boolean) ?? "Thinking..."
+      .filter(Boolean) ?? []
   );
 }
 
@@ -213,7 +213,47 @@ export const ReasoningTrigger = memo(
     ...props
   }: ReasoningTriggerProps) => {
     const { isOpen, isStreaming } = useReasoning();
-    const previewText = getReasoningPreviewLine(preview);
+    const previewRef = useRef<HTMLDivElement>(null);
+    const [isPreviewOverflowing, setIsPreviewOverflowing] = useState(false);
+    const previewLines = getReasoningPreviewLines(preview);
+    const previewText = previewLines[0] ?? "Thinking...";
+    const hasCustomPreview = children !== undefined;
+    const hasMultipleLines = previewLines.length > 1;
+    const isExpandable =
+      hasCustomPreview || hasMultipleLines || isPreviewOverflowing;
+
+    useEffect(() => {
+      if (hasCustomPreview || hasMultipleLines) {
+        setIsPreviewOverflowing(false);
+        return;
+      }
+
+      const previewElement = previewRef.current;
+      const measuredElement = previewElement?.firstElementChild;
+      if (!(measuredElement instanceof HTMLElement)) {
+        setIsPreviewOverflowing(false);
+        return;
+      }
+
+      const updateOverflow = () => {
+        const hasOverflow =
+          measuredElement.scrollHeight > measuredElement.clientHeight + 1 ||
+          measuredElement.scrollWidth > measuredElement.clientWidth + 1;
+        setIsPreviewOverflowing((current) =>
+          current === hasOverflow ? current : hasOverflow
+        );
+      };
+
+      updateOverflow();
+
+      if (typeof ResizeObserver === "undefined") {
+        return;
+      }
+
+      const observer = new ResizeObserver(updateOverflow);
+      observer.observe(measuredElement);
+      return () => observer.disconnect();
+    }, [hasCustomPreview, hasMultipleLines, previewText]);
 
     if (isOpen) {
       return null;
@@ -222,7 +262,8 @@ export const ReasoningTrigger = memo(
     return (
       <div
         className={cn(
-          "group/reasoning relative w-full overflow-hidden rounded-md px-2 py-1.5 transition-colors hover:bg-muted/20",
+          "group/reasoning relative w-full overflow-hidden rounded-md px-2 py-1.5 transition-colors",
+          isExpandable && "hover:bg-muted/20",
           className
         )}
       >
@@ -232,6 +273,7 @@ export const ReasoningTrigger = memo(
               "relative h-[1lh] overflow-hidden text-[13px] leading-[1.65]",
               isStreaming && "animate-pulse"
             )}
+            ref={previewRef}
           >
             <ReasoningMarkdown
               className="line-clamp-1 overflow-hidden"
@@ -240,13 +282,15 @@ export const ReasoningTrigger = memo(
             />
           </div>
         )}
-        <CollapsibleTrigger
-          aria-label="Expand reasoning"
-          className="absolute inset-0 rounded-md focus-visible:ring-2 focus-visible:ring-ring/60"
-          {...props}
-        >
-          <span className="sr-only">Expand reasoning</span>
-        </CollapsibleTrigger>
+        {isExpandable && (
+          <CollapsibleTrigger
+            aria-label="Expand reasoning"
+            className="absolute inset-0 rounded-md focus-visible:ring-2 focus-visible:ring-ring/60"
+            {...props}
+          >
+            <span className="sr-only">Expand reasoning</span>
+          </CollapsibleTrigger>
+        )}
       </div>
     );
   }
