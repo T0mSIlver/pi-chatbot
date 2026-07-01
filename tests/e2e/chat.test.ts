@@ -402,6 +402,73 @@ test.describe("Chat Page", () => {
     ).toHaveCount(1);
   });
 
+  test("shows prompt action buttons on touch devices without hover", async ({
+    baseURL,
+    browser,
+  }) => {
+    const timestamp = new Date().toISOString();
+    const chatId = "00000000-0000-4000-8000-000000000207";
+    const context = await browser.newContext({
+      hasTouch: true,
+      isMobile: true,
+      viewport: { width: 820, height: 1180 },
+    });
+    const page = await context.newPage();
+
+    try {
+      await page.route("**/api/messages**", async (route) => {
+        const url = new URL(route.request().url());
+        if (url.searchParams.get("chatId") !== chatId) {
+          await route.continue();
+          return;
+        }
+
+        await route.fulfill({
+          json: {
+            isReadonly: false,
+            messages: [
+              {
+                id: "user-message",
+                metadata: { createdAt: timestamp },
+                parts: [
+                  { type: "text", text: "Visible mobile prompt actions" },
+                ],
+                role: "user",
+              },
+            ],
+            projectId: "00000000-0000-4000-8000-000000000208",
+            userId: "00000000-0000-4000-8000-000000000209",
+          },
+        });
+      });
+
+      await page.goto(
+        new URL(`/chat/${chatId}`, baseURL ?? "http://localhost:3000").href
+      );
+
+      await expect
+        .poll(() => page.evaluate(() => matchMedia("(hover: hover)").matches))
+        .toBe(false);
+
+      const userMessage = page.getByTestId("message-user");
+      await expect(
+        userMessage.getByRole("button", { name: "Copy" })
+      ).toHaveCount(1);
+      await expect(
+        userMessage.getByRole("button", { name: "Edit" })
+      ).toHaveCount(1);
+      await expect
+        .poll(() =>
+          userMessage
+            .getByTestId("message-actions")
+            .evaluate((element) => getComputedStyle(element).opacity)
+        )
+        .toBe("1");
+    } finally {
+      await context.close();
+    }
+  });
+
   test("copies prompt and response text to the clipboard", async ({
     baseURL,
     context,
