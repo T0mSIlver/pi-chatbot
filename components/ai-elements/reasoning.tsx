@@ -158,20 +158,27 @@ export type ReasoningTriggerProps = ComponentProps<
   preview?: string;
 };
 
-const PREVIEW_CHARACTER_LIMIT = 260;
+const streamdownPlugins = { cjk, code, math, mermaid };
 
-function getReasoningPreview(preview: string | undefined, fromEnd = false) {
-  const text = preview?.replace(/\s+/g, " ").trim();
-  if (!text) {
-    return "Thinking...";
-  }
-  if (text.length <= PREVIEW_CHARACTER_LIMIT) {
-    return text;
-  }
-  if (fromEnd) {
-    return `...${text.slice(-PREVIEW_CHARACTER_LIMIT).trimStart()}`;
-  }
-  return `${text.slice(0, PREVIEW_CHARACTER_LIMIT).trimEnd()}...`;
+function ReasoningMarkdown({
+  className,
+  text,
+  ...props
+}: HTMLAttributes<HTMLDivElement> & { text: string }) {
+  return (
+    <div
+      className={cn(
+        "text-[13px] text-muted-foreground/75 leading-[1.65]",
+        "[&_blockquote]:border-0 [&_blockquote]:pl-0 [&_blockquote]:text-inherit",
+        "[&_code]:text-[12px] [&_p]:my-1 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0",
+        "[&_pre]:my-2 [&_pre]:max-h-52 [&_pre]:overflow-auto [&_pre]:rounded-md [&_pre]:bg-muted/35 [&_pre]:p-2",
+        className
+      )}
+      {...props}
+    >
+      <Streamdown plugins={streamdownPlugins}>{text}</Streamdown>
+    </div>
+  );
 }
 
 export const ReasoningTrigger = memo(
@@ -182,47 +189,41 @@ export const ReasoningTrigger = memo(
     ...props
   }: ReasoningTriggerProps) => {
     const { isOpen, isStreaming } = useReasoning();
-    const previewText = getReasoningPreview(preview, isStreaming);
-    const triggerText = isOpen ? "Reasoning" : previewText;
+    const previewText = preview?.trim() ? preview : "Thinking...";
+
+    if (isOpen) {
+      return null;
+    }
 
     return (
-      <CollapsibleTrigger
-        aria-label={isOpen ? "Collapse reasoning" : "Expand reasoning"}
+      <div
         className={cn(
-          "group/reasoning relative flex w-full items-start gap-2 overflow-hidden rounded-md py-1.5 pr-2 pl-3 text-left text-[13px] text-muted-foreground/65 leading-[1.65] transition-colors hover:bg-muted/25 hover:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/60",
+          "group/reasoning relative w-full overflow-hidden rounded-md px-2 py-1.5 transition-colors hover:bg-muted/20",
           className
         )}
-        {...props}
       >
         {children ?? (
-          <>
-            <span
+          <div
+            className={cn(
+              "relative max-h-[3.4rem] overflow-hidden",
+              isStreaming && "animate-pulse"
+            )}
+          >
+            <ReasoningMarkdown text={previewText} />
+            <div
               aria-hidden="true"
-              className="pointer-events-none absolute inset-y-1 left-0 w-px bg-gradient-to-b from-transparent via-muted-foreground/30 to-transparent"
+              className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-background to-transparent"
             />
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-y-0 left-0 w-16 -translate-x-full bg-gradient-to-r from-transparent via-foreground/10 to-transparent opacity-0 transition-all duration-700 group-hover/reasoning:translate-x-[520%] group-hover/reasoning:opacity-100"
-            />
-            <span
-              className={cn(
-                "min-w-0 flex-1 whitespace-pre-wrap break-words",
-                !isOpen && "line-clamp-2",
-                isOpen && "font-medium text-muted-foreground/75",
-                isStreaming && !isOpen && "animate-pulse"
-              )}
-            >
-              {triggerText}
-            </span>
-            <ChevronDownIcon
-              className={cn(
-                "mt-0.5 size-4 shrink-0 text-muted-foreground/50 transition-transform",
-                isOpen ? "rotate-180" : "rotate-0"
-              )}
-            />
-          </>
+          </div>
         )}
-      </CollapsibleTrigger>
+        <CollapsibleTrigger
+          aria-label="Expand reasoning"
+          className="absolute inset-0 rounded-md focus-visible:ring-2 focus-visible:ring-ring/60"
+          {...props}
+        >
+          <span className="sr-only">Expand reasoning</span>
+        </CollapsibleTrigger>
+      </div>
     );
   }
 );
@@ -230,8 +231,6 @@ export const ReasoningTrigger = memo(
 export type ReasoningContentProps = HTMLAttributes<HTMLDivElement> & {
   children: string;
 };
-
-const streamdownPlugins = { cjk, code, math, mermaid };
 
 export const ReasoningContent = memo(
   ({ className, children, ...props }: ReasoningContentProps) => {
@@ -248,19 +247,23 @@ export const ReasoningContent = memo(
     return (
       <div
         className={cn(
-          "mt-2 animate-in fade-in-0 duration-200 text-muted-foreground/60 [overflow-anchor:none]",
+          "group/reasoning-content relative animate-in fade-in-0 duration-200 [overflow-anchor:none]",
           className
         )}
       >
         <div
-          className="max-h-[200px] overflow-y-auto rounded-lg border border-border/20 bg-muted/30 px-3 py-2 text-[11px] leading-relaxed"
+          className="max-h-[260px] overflow-y-auto rounded-md px-2 py-1.5"
           ref={scrollRef}
           style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
         >
-          <Streamdown plugins={streamdownPlugins} {...props}>
-            {children}
-          </Streamdown>
+          <ReasoningMarkdown text={children} {...props} />
         </div>
+        <CollapsibleTrigger
+          aria-label="Collapse reasoning"
+          className="absolute top-1 right-1 rounded-sm p-1 text-muted-foreground/40 opacity-45 transition-opacity hover:bg-muted/30 hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/60 group-hover/reasoning-content:opacity-100"
+        >
+          <ChevronDownIcon className="size-3 rotate-180" />
+        </CollapsibleTrigger>
       </div>
     );
   }
