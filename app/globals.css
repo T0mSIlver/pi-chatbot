@@ -399,6 +399,17 @@ textarea:focus-visible {
   animation: glow-pulse 2s ease-in-out infinite;
 }
 
+@media (min-width: 768px) and (hover: hover) {
+  .message-actions-hover-reveal {
+    opacity: 0;
+  }
+
+  .group\/message:hover .message-actions-hover-reveal,
+  .message-actions-hover-reveal:focus-within {
+    opacity: 1;
+  }
+}
+
 .ProseMirror {
   outline: none;
 }

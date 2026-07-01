@@ -43,7 +43,10 @@ export function PureMessageActions({
   };
 
   return (
-    <Actions className="-ml-0.5 opacity-0 transition-opacity duration-150 group-hover/message:opacity-100">
+    <Actions
+      className="-ml-0.5 message-actions-hover-reveal opacity-100 transition-opacity duration-150 focus-within:opacity-100"
+      data-testid="message-actions"
+    >
       {textFromParts && message.role !== "system" && (
         <Action
           className="text-muted-foreground/50 hover:text-foreground"
