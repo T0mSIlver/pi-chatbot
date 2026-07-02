@@ -198,6 +198,14 @@ export const ReasoningTrigger = memo(
       previewText.length > 160;
 
     useEffect(() => {
+      // While open the preview is unmounted, so there is nothing to
+      // measure. Bail without touching the flag: clobbering it to false
+      // here would strand a single-line block closed once it is
+      // collapsed again (its expand trigger would never render).
+      if (isOpen) {
+        return;
+      }
+
       if (hasCustomPreview || hasMultipleLines) {
         setIsPreviewOverflowing(false);
         return;
@@ -228,7 +236,7 @@ export const ReasoningTrigger = memo(
       const observer = new ResizeObserver(updateOverflow);
       observer.observe(measuredElement);
       return () => observer.disconnect();
-    }, [hasCustomPreview, hasMultipleLines, previewText]);
+    }, [hasCustomPreview, hasMultipleLines, previewText, isOpen]);
 
     if (isOpen) {
       return null;
