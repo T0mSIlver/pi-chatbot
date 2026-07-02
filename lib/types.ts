@@ -6,6 +6,10 @@ export const messageMetadataSchema = z.object({
   createdAt: z.string(),
   parentId: z.string().nullable().optional(),
   checkpointId: z.string().optional(),
+  // Set when this assistant turn ended abnormally (process restart / error) and
+  // is being surfaced from a run's checkpointed partial rather than the
+  // completed transcript.
+  interrupted: z.boolean().optional(),
   providerRequestIndex: z.number().optional(),
   providerStats: z
     .object({

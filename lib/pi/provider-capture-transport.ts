@@ -2,6 +2,7 @@ import "server-only";
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
+import { isOpenAICompatibleRequest } from "@/lib/openai-compatible";
 import {
   appendProviderCapture,
   headersToRecord,
@@ -166,9 +167,24 @@ async function captureProviderFetch(
 ) {
   const request = new Request(input, init);
   const { rawBody, bodyReadError } = await readBodyText(request);
+  const body = parseCapturedBody(rawBody);
+
+  if (
+    !isOpenAICompatibleRequest({
+      api: store.api,
+      body,
+      bodyReadError,
+      method: request.method,
+      url: request.url,
+    })
+  ) {
+    return baseFetch(request);
+  }
+
   const createdAt = new Date().toISOString();
   store.requestCounter.value += 1;
   const requestIndex = store.requestCounter.value;
+  const headers = sanitizeHeaders(headersToRecord(request.headers));
 
   const record: ProviderCaptureRecord = {
     id: randomUUID(),
@@ -183,9 +199,9 @@ async function captureProviderFetch(
     request: {
       method: request.method,
       url: request.url,
-      headers: sanitizeHeaders(headersToRecord(request.headers)),
+      headers,
       rawBody,
-      body: parseCapturedBody(rawBody),
+      body,
       bodyReadError,
     },
   };

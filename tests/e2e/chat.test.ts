@@ -120,8 +120,18 @@ test.describe("Chat Page", () => {
     const chatId = "00000000-0000-4000-8000-000000000101";
     const projectId = "00000000-0000-4000-8000-000000000102";
     const userId = "00000000-0000-4000-8000-000000000103";
-    const capture = {
-      id: "capture-1",
+    const createOpenAICapture = ({
+      content,
+      id,
+      requestIndex,
+      responseText,
+    }: {
+      content: string;
+      id: string;
+      requestIndex: number;
+      responseText: string;
+    }) => ({
+      id,
       chatId,
       assistantMessageId: "assistant-1",
       createdAt: timestamp,
@@ -130,7 +140,7 @@ test.describe("Chat Page", () => {
       provider: "llamacpp",
       api: "openai-completions",
       model: "qwen36dense-27b",
-      requestIndex: 1,
+      requestIndex,
       request: {
         method: "POST",
         url: "http://model.local/v1/chat/completions",
@@ -141,7 +151,7 @@ test.describe("Chat Page", () => {
         body: {
           model: "qwen36dense-27b",
           stream: true,
-          messages: [{ role: "user", content: "Inspect this prompt" }],
+          messages: [{ role: "user", content }],
         },
       },
       response: {
@@ -149,10 +159,9 @@ test.describe("Chat Page", () => {
         statusText: "OK",
         headers: { "content-type": "text/event-stream" },
         chunks: [
-          'data: {"choices":[{"delta":{"content":"Captured response"}}]}\n',
+          `data: {"choices":[{"delta":{"content":"${responseText}"}}]}\n`,
         ],
-        rawBody:
-          'data: {"choices":[{"delta":{"content":"Captured response"}}]}\n',
+        rawBody: `data: {"choices":[{"delta":{"content":"${responseText}"}}]}\n`,
       },
       stats: {
         generatedTokens: 48,
@@ -162,7 +171,50 @@ test.describe("Chat Page", () => {
         promptTokens: 100,
         promptTokensPerSecond: 400,
       },
-    };
+    });
+    const captures = [
+      createOpenAICapture({
+        content: "Inspect later prompt",
+        id: "capture-11",
+        requestIndex: 11,
+        responseText: "Captured response 11",
+      }),
+      {
+        id: "capture-fetch",
+        chatId,
+        assistantMessageId: "assistant-1",
+        createdAt: timestamp,
+        completedAt: timestamp,
+        purpose: "chat",
+        provider: "llamacpp",
+        api: "openai-completions",
+        model: "qwen36dense-27b",
+        requestIndex: 111,
+        request: {
+          method: "GET",
+          url: "https://reader.local/fetch?url=https%3A%2F%2Fexample.com",
+          headers: {},
+        },
+        response: {
+          status: 200,
+          statusText: "OK",
+          headers: { "content-type": "text/plain" },
+          rawBody: "Fetched page body",
+        },
+      },
+      createOpenAICapture({
+        content: "Inspect middle prompt",
+        id: "capture-2",
+        requestIndex: 2,
+        responseText: "Captured response 2",
+      }),
+      createOpenAICapture({
+        content: "Inspect this prompt",
+        id: "capture-1",
+        requestIndex: 1,
+        responseText: "Captured response",
+      }),
+    ];
 
     await page.context().addCookies([
       {
@@ -212,7 +264,7 @@ test.describe("Chat Page", () => {
     });
 
     await page.route("**/api/chat/**/provider-captures", async (route) => {
-      await route.fulfill({ json: { captures: [capture] } });
+      await route.fulfill({ json: { captures } });
     });
 
     await page.goto("/");
@@ -225,9 +277,22 @@ test.describe("Chat Page", () => {
     await page.getByTestId("inspect-openai-payload-item").click();
 
     await expect(page.getByTestId("provider-capture-dialog")).toBeVisible();
+    const listItems = page.getByTestId("provider-capture-list-item");
+    await expect(listItems).toHaveCount(3);
+    await expect(listItems.nth(0).locator("span").first()).toHaveText(
+      "Request 1"
+    );
+    await expect(listItems.nth(1).locator("span").first()).toHaveText(
+      "Request 2"
+    );
+    await expect(listItems.nth(2).locator("span").first()).toHaveText(
+      "Request 11"
+    );
+
     const requestPanel = page.getByTestId("provider-capture-request");
     await expect(requestPanel).toContainText("user");
     await expect(requestPanel).toContainText("Inspect this prompt");
+    await expect(requestPanel).not.toContainText("Fetched page body");
     await expect(page.getByTestId("provider-stats")).toContainText("100 tok");
 
     await page.getByTestId("provider-capture-response-tab").click();
@@ -400,6 +465,73 @@ test.describe("Chat Page", () => {
     await expect(
       finalMessage.getByRole("button", { name: "Branch" })
     ).toHaveCount(1);
+  });
+
+  test("shows prompt action buttons on touch devices without hover", async ({
+    baseURL,
+    browser,
+  }) => {
+    const timestamp = new Date().toISOString();
+    const chatId = "00000000-0000-4000-8000-000000000207";
+    const context = await browser.newContext({
+      hasTouch: true,
+      isMobile: true,
+      viewport: { width: 820, height: 1180 },
+    });
+    const page = await context.newPage();
+
+    try {
+      await page.route("**/api/messages**", async (route) => {
+        const url = new URL(route.request().url());
+        if (url.searchParams.get("chatId") !== chatId) {
+          await route.continue();
+          return;
+        }
+
+        await route.fulfill({
+          json: {
+            isReadonly: false,
+            messages: [
+              {
+                id: "user-message",
+                metadata: { createdAt: timestamp },
+                parts: [
+                  { type: "text", text: "Visible mobile prompt actions" },
+                ],
+                role: "user",
+              },
+            ],
+            projectId: "00000000-0000-4000-8000-000000000208",
+            userId: "00000000-0000-4000-8000-000000000209",
+          },
+        });
+      });
+
+      await page.goto(
+        new URL(`/chat/${chatId}`, baseURL ?? "http://localhost:3000").href
+      );
+
+      await expect
+        .poll(() => page.evaluate(() => matchMedia("(hover: hover)").matches))
+        .toBe(false);
+
+      const userMessage = page.getByTestId("message-user");
+      await expect(
+        userMessage.getByRole("button", { name: "Copy" })
+      ).toHaveCount(1);
+      await expect(
+        userMessage.getByRole("button", { name: "Edit" })
+      ).toHaveCount(1);
+      await expect
+        .poll(() =>
+          userMessage
+            .getByTestId("message-actions")
+            .evaluate((element) => getComputedStyle(element).opacity)
+        )
+        .toBe("1");
+    } finally {
+      await context.close();
+    }
   });
 
   test("copies prompt and response text to the clipboard", async ({

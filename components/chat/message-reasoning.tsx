@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import {
   Reasoning,
   ReasoningContent,
@@ -16,22 +15,15 @@ export function MessageReasoning({
   isLoading,
   reasoning,
 }: MessageReasoningProps) {
-  const [hasBeenStreaming, setHasBeenStreaming] = useState(isLoading);
-
-  useEffect(() => {
-    if (isLoading) {
-      setHasBeenStreaming(true);
-    }
-  }, [isLoading]);
-
   return (
     <Reasoning
+      className="w-full max-w-[760px]"
       data-testid="message-reasoning"
-      defaultOpen={hasBeenStreaming}
+      defaultOpen={false}
       isStreaming={isLoading}
     >
-      <ReasoningTrigger />
-      <ReasoningContent>{reasoning}</ReasoningContent>
+      <ReasoningTrigger preview={reasoning} />
+      <ReasoningContent className="mt-1.5">{reasoning}</ReasoningContent>
     </Reasoning>
   );
 }

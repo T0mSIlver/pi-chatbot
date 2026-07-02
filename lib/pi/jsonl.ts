@@ -240,8 +240,8 @@ function convertEntry(
             chatId,
           })
         : null) ??
-      toolPart.displayIntent ??
-      null;
+    toolPart.displayIntent ??
+    null;
     toolPart.state = message.isError ? "output-error" : "output-available";
     toolPart.output = displayIntent
       ? { text: text || "Opened in the preview pane." }

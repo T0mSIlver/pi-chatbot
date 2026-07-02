@@ -25,7 +25,10 @@ import {
   mcpConfig,
   project,
   projectMcpServer,
+  type RunStatus,
+  type Stream,
   type Suggestion,
+  stream,
   type User,
   user,
   type Vote,
@@ -1051,10 +1054,88 @@ export function updateChatVisibilityById(_args: {
   return;
 }
 
-export function createStreamId(_args: { streamId: string; chatId: string }) {
-  return;
+// --- Run records (durable shadow of the in-process InMemoryChatRun) ----------
+
+export async function startRunRecord(args: {
+  id: string;
+  chatId: string;
+  assistantMessageId: string | null;
+}) {
+  await db.insert(stream).values({
+    id: args.id,
+    chatId: args.chatId,
+    assistantMessageId: args.assistantMessageId,
+    status: "active",
+  });
 }
 
-export function getStreamIdsByChatId(_args: { chatId: string }): string[] {
-  return [];
+export async function checkpointRunPartial(args: {
+  id: string;
+  partial: unknown;
+}) {
+  await db
+    .update(stream)
+    .set({ partial: args.partial, updatedAt: new Date() })
+    .where(eq(stream.id, args.id));
+}
+
+export async function markRunTerminal(args: {
+  id: string;
+  status: RunStatus;
+  error?: string | null;
+  partial?: unknown;
+}) {
+  await db
+    .update(stream)
+    .set({
+      status: args.status,
+      error: args.error ?? null,
+      finishedAt: new Date(),
+      updatedAt: new Date(),
+      ...(args.partial === undefined ? {} : { partial: args.partial }),
+    })
+    .where(eq(stream.id, args.id));
+}
+
+export async function getLatestRunByChatId(args: {
+  chatId: string;
+}): Promise<Stream | null> {
+  const [row] = await db
+    .select()
+    .from(stream)
+    .where(eq(stream.chatId, args.chatId))
+    .orderBy(desc(stream.createdAt))
+    .limit(1);
+  return row ?? null;
+}
+
+// Boot reconciliation: a row still 'active' cannot have survived a process
+// restart, so flip it to 'interrupted'. Returns how many were reconciled.
+export async function markActiveRunsInterrupted(): Promise<number> {
+  const rows = await db
+    .update(stream)
+    .set({
+      status: "interrupted",
+      finishedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(stream.status, "active"))
+    .returning({ id: stream.id });
+  return rows.length;
+}
+
+// Lazy reconciliation of a single run whose producer is no longer in memory.
+export async function markRunInterrupted(args: { id: string }) {
+  await db
+    .update(stream)
+    .set({
+      status: "interrupted",
+      finishedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(and(eq(stream.id, args.id), eq(stream.status, "active")));
+}
+
+export async function deleteRunsByChatId(args: { chatId: string }) {
+  await db.delete(stream).where(eq(stream.chatId, args.chatId));
 }

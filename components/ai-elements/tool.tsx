@@ -3,31 +3,21 @@
 import type { DynamicToolUIPart, ToolUIPart } from "ai";
 import type { ComponentProps, ReactNode } from "react";
 
-import { Badge } from "@/components/ui/badge";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
-import {
-  CheckCircleIcon,
-  ChevronDownIcon,
-  CircleIcon,
-  ClockIcon,
-  WrenchIcon,
-  XCircleIcon,
-} from "lucide-react";
+import { ChevronDownIcon } from "lucide-react";
 import { isValidElement } from "react";
-
-import { CodeBlock } from "./code-block";
 
 export type ToolProps = ComponentProps<typeof Collapsible>;
 
 export const Tool = ({ className, ...props }: ToolProps) => (
   <Collapsible
     className={cn(
-      "group not-prose mb-2 w-full max-w-full overflow-hidden rounded-md border",
+      "group not-prose w-full max-w-full overflow-hidden rounded-md border border-border/40 bg-muted/20",
       className
     )}
     {...props}
@@ -49,39 +39,14 @@ export type ToolHeaderProps = {
 );
 
 const statusLabels: Record<ToolPart["state"], string> = {
-  "approval-requested": "Awaiting Approval",
-  "approval-responded": "Responded",
-  "input-available": "Running",
-  "input-streaming": "Pending",
-  "output-available": "Completed",
-  "output-denied": "Denied",
-  "output-error": "Error",
+  "approval-requested": "approval",
+  "approval-responded": "responded",
+  "input-available": "running",
+  "input-streaming": "writing",
+  "output-available": "",
+  "output-denied": "denied",
+  "output-error": "error",
 };
-
-const statusIcons: Record<ToolPart["state"], ReactNode> = {
-  "approval-requested": <ClockIcon className="size-4 text-yellow-600" />,
-  "approval-responded": <CheckCircleIcon className="size-4 text-blue-600" />,
-  "input-available": <ClockIcon className="size-4 animate-pulse" />,
-  "input-streaming": (
-    <span
-      aria-hidden="true"
-      className="relative flex size-4 items-center justify-center"
-    >
-      <CircleIcon className="absolute size-4 animate-ping text-blue-500/60" />
-      <CircleIcon className="size-2.5 fill-blue-500 text-blue-500" />
-    </span>
-  ),
-  "output-available": <CheckCircleIcon className="size-4 text-green-600" />,
-  "output-denied": <XCircleIcon className="size-4 text-orange-600" />,
-  "output-error": <XCircleIcon className="size-4 text-red-600" />,
-};
-
-export const getStatusBadge = (status: ToolPart["state"]) => (
-  <Badge className="gap-1.5 rounded-full text-[11px] md:text-xs" variant="secondary">
-    {statusIcons[status]}
-    {statusLabels[status]}
-  </Badge>
-);
 
 export const ToolHeader = ({
   className,
@@ -97,19 +62,29 @@ export const ToolHeader = ({
   return (
     <CollapsibleTrigger
       className={cn(
-        "flex w-full items-start justify-between gap-3 p-3 text-left md:items-center md:gap-4",
+        "flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-muted/25 focus-visible:ring-2 focus-visible:ring-ring/60",
         className
       )}
       {...props}
     >
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-        <WrenchIcon className="size-4 text-muted-foreground" />
-        <span className="min-w-0 truncate font-medium text-sm">
+      <div className="flex min-w-0 flex-1 items-baseline gap-2">
+        <span className="min-w-0 truncate font-mono text-[12px] text-foreground/75">
           {title ?? derivedName}
         </span>
-        {getStatusBadge(state)}
+        {statusLabels[state] && (
+          <span
+            className={cn(
+              "shrink-0 text-[11px] text-muted-foreground/60",
+              (state === "input-available" || state === "input-streaming") &&
+                "animate-pulse",
+              state === "output-error" && "text-destructive"
+            )}
+          >
+            {statusLabels[state]}
+          </span>
+        )}
       </div>
-      <ChevronDownIcon className="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+      <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground/45 transition-transform group-data-[state=open]:rotate-180" />
     </CollapsibleTrigger>
   );
 };
@@ -119,7 +94,7 @@ export type ToolContentProps = ComponentProps<typeof CollapsibleContent>;
 export const ToolContent = ({ className, ...props }: ToolContentProps) => (
   <CollapsibleContent
     className={cn(
-      "data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 space-y-4 p-4 text-popover-foreground outline-none data-[state=closed]:animate-out data-[state=open]:animate-in",
+      "data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 divide-y divide-border/40 border-border/40 border-t text-popover-foreground outline-none data-[state=closed]:animate-out data-[state=open]:animate-in",
       className
     )}
     {...props}
@@ -130,18 +105,6 @@ export type ToolInputProps = ComponentProps<"div"> & {
   input: ToolPart["input"];
   inputText?: string;
 };
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function formatFieldName(name: string) {
-  return name
-    .replace(/[_-]+/g, " ")
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
 function parseInputText(inputText: string | undefined) {
   if (!inputText) {
@@ -278,76 +241,76 @@ function parsePartialInputText(inputText: string | undefined) {
   return Object.keys(fields).length > 0 ? fields : undefined;
 }
 
-function formatScalarValue(value: unknown) {
+function formatToolValue(value: unknown) {
+  if (value === undefined) {
+    return "";
+  }
+
   if (value === null) {
     return "null";
   }
+
   if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      try {
+        return JSON.stringify(JSON.parse(value), null, 2);
+      } catch {
+        return value;
+      }
+    }
     return value;
   }
+
   if (typeof value === "number" || typeof value === "boolean") {
     return String(value);
   }
-  return JSON.stringify(value, null, 2);
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
-const ToolInputValue = ({ value }: { value: unknown }) => {
-  if (Array.isArray(value)) {
-    if (value.length === 0) {
-      return <span className="text-muted-foreground">[]</span>;
-    }
+function isEmptyToolValue(value: unknown) {
+  return value === undefined || value === null || value === "";
+}
 
+const ToolValueBlock = ({
+  tone = "default",
+  value,
+}: {
+  tone?: "default" | "error" | "muted";
+  value: unknown;
+}) => {
+  if (isValidElement(value)) {
     return (
-      <div className="space-y-1">
-        {value.map((item, index) => (
-          <div className="grid gap-0.5" key={`item-${index}-${typeof item}`}>
-            <span className="font-medium text-[11px] text-muted-foreground uppercase tracking-wide">
-              {index + 1}.
-            </span>
-            <ToolInputValue value={item} />
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  if (isPlainRecord(value)) {
-    const entries = Object.entries(value);
-    if (entries.length === 0) {
-      return <span className="text-muted-foreground">{"{}"}</span>;
-    }
-
-    return (
-      <div className="space-y-2">
-        {entries.map(([key, nestedValue]) => (
-          <div className="grid gap-1" key={key}>
-            <div className="font-medium text-[11px] text-muted-foreground uppercase tracking-wide">
-              {formatFieldName(key)}
-            </div>
-            <ToolInputValue value={nestedValue} />
-          </div>
-        ))}
+      <div
+        className={cn(
+          "max-h-72 overflow-auto px-3 py-2 text-[12px] leading-5",
+          tone === "muted" && "text-muted-foreground",
+          tone === "error" && "text-destructive"
+        )}
+      >
+        {value as ReactNode}
       </div>
     );
   }
 
   return (
-    <span className="block whitespace-pre-wrap break-words text-[12px] leading-5">
-      {formatScalarValue(value)}
-    </span>
+    <pre
+      className={cn(
+        "max-h-72 overflow-auto whitespace-pre-wrap break-words px-3 py-2 font-mono text-[12px] leading-5 [overflow-wrap:anywhere] [tab-size:2]",
+        tone === "muted" && "text-muted-foreground",
+        tone === "error" && "text-destructive",
+        tone === "default" && "text-foreground/90"
+      )}
+    >
+      {formatToolValue(value)}
+    </pre>
   );
 };
-
-const StreamingInputDraft = ({ inputText }: { inputText: string }) => (
-  <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2 text-[12px] leading-5">
-    <div className="mb-1 font-medium text-[11px] text-muted-foreground uppercase tracking-wide">
-      Writing
-    </div>
-    <div className="whitespace-pre-wrap break-words font-sans text-foreground/90">
-      {inputText || "Preparing parameters..."}
-    </div>
-  </div>
-);
 
 export const ToolInput = ({
   className,
@@ -358,32 +321,15 @@ export const ToolInput = ({
   const parsedInputText =
     parseInputText(inputText) ?? parsePartialInputText(inputText);
   const value = input ?? parsedInputText;
+  const displayValue = value ?? inputText ?? "";
+
+  if (isEmptyToolValue(displayValue)) {
+    return null;
+  }
 
   return (
-    <div className={cn("space-y-2 overflow-hidden", className)} {...props}>
-      <h4 className="font-medium text-muted-foreground text-xs uppercase tracking-wide">
-        Parameters
-      </h4>
-      <div className="rounded-md bg-muted/40 p-3 font-sans">
-        {value === undefined && inputText !== undefined ? (
-          <StreamingInputDraft inputText={inputText} />
-        ) : isPlainRecord(value) ? (
-          <div className="space-y-3">
-            {Object.entries(value).map(([key, fieldValue]) => (
-              <div className="grid gap-1" key={key}>
-                <div className="font-medium text-[11px] text-muted-foreground uppercase tracking-wide">
-                  {formatFieldName(key)}
-                </div>
-                <div className="min-w-0 rounded-sm text-foreground">
-                  <ToolInputValue value={fieldValue} />
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <ToolInputValue value={value} />
-        )}
-      </div>
+    <div className={cn("min-w-0 overflow-hidden", className)} {...props}>
+      <ToolValueBlock tone="muted" value={displayValue} />
     </div>
   );
 };
@@ -399,34 +345,18 @@ export const ToolOutput = ({
   errorText,
   ...props
 }: ToolOutputProps) => {
-  if (!(output || errorText)) {
+  const displayValue = errorText ?? output;
+
+  if (isEmptyToolValue(displayValue)) {
     return null;
   }
 
-  let Output = <div>{output as ReactNode}</div>;
-
-  if (typeof output === "object" && !isValidElement(output)) {
-    Output = (
-      <CodeBlock code={JSON.stringify(output, null, 2)} language="json" />
-    );
-  } else if (typeof output === "string") {
-    Output = <CodeBlock code={output} language="json" />;
-  }
-
   return (
-    <div className={cn("space-y-2", className)} {...props}>
-      <h4 className="font-medium text-muted-foreground text-xs uppercase tracking-wide">
-        {errorText ? "Error" : "Result"}
-      </h4>
-      <div
-        className={cn(
-          "overflow-x-auto rounded-md text-xs [&_table]:w-full",
-          errorText && "bg-destructive/10 text-destructive"
-        )}
-      >
-        {errorText && <div>{errorText}</div>}
-        {Output}
-      </div>
+    <div className={cn("min-w-0 overflow-hidden", className)} {...props}>
+      <ToolValueBlock
+        tone={errorText ? "error" : "default"}
+        value={displayValue}
+      />
     </div>
   );
 };
