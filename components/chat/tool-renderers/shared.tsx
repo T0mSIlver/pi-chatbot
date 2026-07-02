@@ -155,7 +155,11 @@ export function ToolRow({
   const open = hasBody && (userOpen ?? autoOpen);
 
   const containerClass = cn(
-    "group not-prose mb-2 w-full min-w-0 max-w-[760px] overflow-hidden rounded-[var(--radius)] border bg-card text-[13px] shadow-[var(--shadow-card)]",
+    // Bleed the card frame -8px into the gutter (matching the reasoning
+    // block) with px-2 headers below, so the icon/verb land at x=0 — the
+    // same vertical line as reasoning and response text. max-w carries the
+    // +1rem so the content column still tops out at ~760px.
+    "group not-prose -mx-2 mb-2 w-[calc(100%+1rem)] min-w-0 max-w-[776px] overflow-hidden rounded-[var(--radius)] border bg-card text-[13px] shadow-[var(--shadow-card)]",
     error && "border-destructive/35"
   );
 
@@ -181,7 +185,7 @@ export function ToolRow({
   if (!hasBody) {
     return (
       <div className={containerClass} data-testid="pi-tool-block">
-        <div className="flex min-h-[38px] w-full items-center gap-2.5 px-3 py-2 text-left">
+        <div className="flex min-h-[38px] w-full items-center gap-2.5 px-2 py-2 text-left">
           {headerContent}
         </div>
       </div>
@@ -195,7 +199,7 @@ export function ToolRow({
       onOpenChange={setUserOpen}
       open={open}
     >
-      <CollapsibleTrigger className="flex min-h-[38px] w-full cursor-pointer items-center gap-2.5 px-3 py-2 text-left hover:bg-muted/45">
+      <CollapsibleTrigger className="flex min-h-[38px] w-full cursor-pointer items-center gap-2.5 px-2 py-2 text-left hover:bg-muted/45">
         {headerContent}
       </CollapsibleTrigger>
       <CollapsibleContent className="border-t">{children}</CollapsibleContent>
