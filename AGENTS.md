@@ -6,7 +6,7 @@ factual; add gotchas here when you hit one that cost real time.
 ## What this is
 
 A Next.js (App Router, turbopack) chat app wrapping the `pi` coding agent
-(`@mariozechner/pi-coding-agent` + `pi-mcp-adapter`). Postgres via Drizzle.
+(`@earendil-works/pi-coding-agent` + `pi-mcp-adapter`). Postgres via Drizzle.
 Per-conversation workspaces live on disk under `~/.pi-chatbot` (override with
 `PI_CHATBOT_HOME`). The hot path for sending a message is
 `app/(chat)/api/chat/route.ts` → `lib/pi/session.ts`.

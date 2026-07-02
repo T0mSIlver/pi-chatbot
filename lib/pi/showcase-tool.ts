@@ -1,7 +1,10 @@
 import "server-only";
 
 import { stat } from "node:fs/promises";
-import { defineTool, type ToolDefinition } from "@mariozechner/pi-coding-agent";
+import {
+  defineTool,
+  type ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { APP_PREVIEW_CDN_HOSTS } from "@/lib/pi/app-preview";
 import type { WorkspaceDisplayIntent, WorkspaceScope } from "@/lib/types";

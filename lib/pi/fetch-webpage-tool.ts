@@ -1,7 +1,10 @@
 import "server-only";
 
 import { isIP } from "node:net";
-import { defineTool, type ToolDefinition } from "@mariozechner/pi-coding-agent";
+import {
+  defineTool,
+  type ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 const DEFAULT_READER_BASE_URL = "https://r.jina.ai";

@@ -1,12 +1,12 @@
 import "server-only";
 
-import { completeSimple } from "@mariozechner/pi-ai";
+import { completeSimple } from "@earendil-works/pi-ai/compat";
 import {
   buildSessionContext,
   convertToLlm,
   type SessionEntry,
   serializeConversation,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { z } from "zod";
 import { isTestEnvironment } from "@/lib/constants";
 import { createPiModelRegistry, findPiModel } from "./model";
