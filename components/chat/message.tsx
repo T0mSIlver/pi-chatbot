@@ -4,7 +4,6 @@ import type { ChatMessage, PiToolUIPart, SetMessages } from "@/lib/types";
 import { cn, sanitizeText } from "@/lib/utils";
 import { MessageContent, MessageResponse } from "../ai-elements/message";
 import { Shimmer } from "../ai-elements/shimmer";
-import { SparklesIcon } from "./icons";
 import { MessageActions } from "./message-actions";
 import { MessageReasoning } from "./message-reasoning";
 import { PreviewAttachment } from "./preview-attachment";
@@ -130,7 +129,7 @@ const PurePreviewMessage = ({
           Generation was interrupted — regenerate to continue.
         </div>
       )}
-      {actions}
+      {!isAssistant && actions}
     </>
   );
 
@@ -153,9 +152,14 @@ const PurePreviewMessage = ({
         {isAssistant ? (
           <div className="flex w-full min-w-0 flex-col gap-2">
             {content}
-            {stats && isFinalAssistantAnswer && (
-              <ProviderStatsToggle stats={stats} />
-            )}
+            {/* Footer: token indicators and message actions share one line. */}
+            {isFinalAssistantAnswer &&
+              (stats !== undefined || (!isReadonly && !isLoading)) && (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  {stats && <ProviderStatsToggle stats={stats} />}
+                  {actions}
+                </div>
+              )}
           </div>
         ) : (
           content
