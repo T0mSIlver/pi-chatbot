@@ -23,7 +23,10 @@ export function MessageReasoning({
       isStreaming={isLoading}
     >
       <ReasoningTrigger preview={reasoning} />
-      <ReasoningContent className="mt-1.5">{reasoning}</ReasoningContent>
+      {/* No top margin: the expanded content's first line must land at the
+          same offset as the collapsed preview line (both rely on the inner
+          py-1.5) so the top line does not shift down when the block opens. */}
+      <ReasoningContent>{reasoning}</ReasoningContent>
     </Reasoning>
   );
 }
