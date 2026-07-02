@@ -24,13 +24,13 @@ let mcpAdapterEnvironmentQueue = Promise.resolve();
  * the deployment — no copying into the user's `~/.pi/agent/skills` required.
  * Override the location with PI_CHATBOT_SKILLS_DIR if the build layout differs.
  */
-function getBundledSkillPaths() {
+export function getBundledSkillPaths() {
   const skillsRoot =
     process.env.PI_CHATBOT_SKILLS_DIR ?? path.join(process.cwd(), "skills");
   return [path.join(skillsRoot, "brave-search")];
 }
 
-function getBundledExtensionPaths() {
+export function getBundledExtensionPaths() {
   // Resolve the pi-mcp-adapter package directory WITHOUT require.resolve.
   // Turbopack/webpack rewrite `require.resolve("literal")` into a numeric module
   // id at build time (and constant-fold computed specifiers back to literals),
@@ -51,7 +51,7 @@ function getBundledExtensionPaths() {
   }
 }
 
-async function withMcpAdapterEnvironment<T>(
+export async function withMcpAdapterEnvironment<T>(
   workspacePath: string,
   action: () => Promise<T>
 ) {

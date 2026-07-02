@@ -19,6 +19,7 @@ import {
   type SetStateAction,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -63,6 +64,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { PaperclipIcon, StopIcon } from "./icons";
 import { PreviewAttachment } from "./preview-attachment";
 import {
+  filterSlashCommands,
+  mergeSlashCommands,
+  type PiSlashCommandDto,
   type SlashCommand,
   SlashCommandMenu,
   slashCommands,
@@ -155,8 +159,28 @@ function PureMultimodalInput({
     }
   };
 
+  const { data: piCommandsData } = useSWR<{ commands: PiSlashCommandDto[] }>(
+    `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/chat/${chatId}/commands`,
+    (url: string) => fetch(url).then((r) => r.json()),
+    { revalidateOnFocus: false, dedupingInterval: 60_000 }
+  );
+
+  const allSlashCommands = useMemo(
+    () => mergeSlashCommands(piCommandsData?.commands),
+    [piCommandsData]
+  );
+
   const handleSlashSelect = (cmd: SlashCommand) => {
     setSlashOpen(false);
+
+    // Agent commands take arguments, so selection completes the command in
+    // the composer instead of firing it; Enter then sends it to the agent.
+    if (cmd.action === "pi") {
+      setInput(`/${cmd.name} `);
+      textareaRef.current?.focus();
+      return;
+    }
+
     setInput("");
     switch (cmd.action) {
       case "new":
@@ -398,6 +422,7 @@ function PureMultimodalInput({
       <div className="relative">
         {slashOpen && (
           <SlashCommandMenu
+            commands={allSlashCommands}
             onClose={() => setSlashOpen(false)}
             onSelect={handleSlashSelect}
             query={slashQuery}
@@ -414,8 +439,10 @@ function PureMultimodalInput({
             const cmd = slashCommands.find((c) => c.name === query);
             if (cmd) {
               handleSlashSelect(cmd);
+              return;
             }
-            return;
+            // Not an app command: send to the agent, which handles pi slash
+            // commands (extensions, skills, prompt templates, /compact).
           }
           if (!input.trim() && attachments.length === 0) {
             return;
@@ -485,32 +512,37 @@ function PureMultimodalInput({
           data-testid="multimodal-input"
           onChange={handleInput}
           onKeyDown={(e) => {
-            if (slashOpen) {
-              const filtered = slashCommands.filter((cmd) =>
-                cmd.name.startsWith(slashQuery.toLowerCase())
-              );
-              if (e.key === "ArrowDown") {
-                e.preventDefault();
-                setSlashIndex((i) => Math.min(i + 1, filtered.length - 1));
-                return;
+            if (!slashOpen) {
+              return;
+            }
+            if (e.key === "Escape") {
+              e.preventDefault();
+              setSlashOpen(false);
+              return;
+            }
+            const filtered = filterSlashCommands(allSlashCommands, slashQuery);
+            // No matches: the menu is hidden, so let Enter submit as usual.
+            if (filtered.length === 0) {
+              return;
+            }
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              setSlashIndex((i) => Math.min(i + 1, filtered.length - 1));
+              return;
+            }
+            if (e.key === "ArrowUp") {
+              e.preventDefault();
+              setSlashIndex((i) => Math.max(i - 1, 0));
+              return;
+            }
+            if (e.key === "Enter" || e.key === "Tab") {
+              e.preventDefault();
+              const selected =
+                filtered[Math.min(slashIndex, filtered.length - 1)];
+              if (selected) {
+                handleSlashSelect(selected);
               }
-              if (e.key === "ArrowUp") {
-                e.preventDefault();
-                setSlashIndex((i) => Math.max(i - 1, 0));
-                return;
-              }
-              if (e.key === "Enter" || e.key === "Tab") {
-                e.preventDefault();
-                if (filtered[slashIndex]) {
-                  handleSlashSelect(filtered[slashIndex]);
-                }
-                return;
-              }
-              if (e.key === "Escape") {
-                e.preventDefault();
-                setSlashOpen(false);
-                return;
-              }
+              return;
             }
           }}
           placeholder="Ask anything..."
@@ -812,8 +844,7 @@ function PureModelSelectorCompact({
                 key={key}
               >
                 {grouped[key].map(({ model, curated }) => {
-                  const logoProvider =
-                    model.provider ?? model.id.split("/")[0];
+                  const logoProvider = model.provider ?? model.id.split("/")[0];
                   const modelCapabilities = capabilities?.[model.id];
                   const capabilityModalities =
                     getCapabilityModalities(modelCapabilities);
