@@ -174,11 +174,18 @@ export async function createPiSdkSession({
     providerCapture
   );
 
-  const sessionManager = sessionFilePath
-    ? SessionManager.open(sessionFilePath, undefined, workspacePath)
-    : SessionManager.create(workspacePath);
-
   const created = await withExtensionEnvironment(chat, async () => {
+    // Create the SessionManager *inside* the extension environment so a new
+    // session file lands under PI_CODING_AGENT_DIR (extension-state/agent) —
+    // the same tree Hermes derives its AGENT_ROOT/sessions from. Created
+    // outside the window it would default to the ambient ~/.pi/agent/sessions,
+    // which Hermes never scans, so its session-search backfill would silently
+    // index nothing. SessionManager.open reuses the stored absolute session
+    // path, so it is location-independent; it lives here only for symmetry.
+    const sessionManager = sessionFilePath
+      ? SessionManager.open(sessionFilePath, undefined, workspacePath)
+      : SessionManager.create(workspacePath);
+
     const resourceLoader = new DefaultResourceLoader({
       cwd: workspacePath,
       agentDir,
