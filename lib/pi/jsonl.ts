@@ -52,6 +52,92 @@ function isSessionMessageEntry(value: unknown): value is SessionMessageEntry {
   );
 }
 
+type SessionCustomMessageEntry = {
+  type: "custom_message";
+  id: string;
+  parentId?: string | null;
+  timestamp: string;
+  customType: string;
+  content: unknown;
+  display: boolean;
+};
+
+// Extension output (e.g. slash-command results sent via pi.sendMessage with
+// display: true) — surfaced as an assistant message so command feedback is
+// visible in the chat.
+function isDisplayedCustomMessageEntry(
+  value: unknown
+): value is SessionCustomMessageEntry {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { type?: string }).type === "custom_message" &&
+    (value as { display?: boolean }).display === true
+  );
+}
+
+type SessionCompactionEntry = {
+  type: "compaction";
+  id: string;
+  parentId?: string | null;
+  timestamp: string;
+  summary: string;
+  tokensBefore?: number;
+};
+
+function isCompactionEntry(value: unknown): value is SessionCompactionEntry {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { type?: string }).type === "compaction" &&
+    typeof (value as { summary?: unknown }).summary === "string"
+  );
+}
+
+function convertCustomMessageEntry(
+  entry: SessionCustomMessageEntry,
+  messages: ChatMessage[]
+) {
+  const text = contentToText(entry.content);
+  if (!text) {
+    return;
+  }
+  messages.push({
+    id: String(entry.id ?? generateUUID()),
+    role: "assistant",
+    parts: [{ type: "text", text }],
+    metadata: {
+      checkpointId: entry.id ? String(entry.id) : ROOT_WORKSPACE_CHECKPOINT_ID,
+      createdAt: createdAt(entry.timestamp),
+      parentId: entry.parentId == null ? null : String(entry.parentId),
+      synthetic: true,
+    },
+  });
+}
+
+function convertCompactionEntry(
+  entry: SessionCompactionEntry,
+  messages: ChatMessage[]
+) {
+  const tokensNote = entry.tokensBefore
+    ? ` (${entry.tokensBefore.toLocaleString("en-US")} tokens before)`
+    : "";
+  messages.push({
+    id: String(entry.id ?? generateUUID()),
+    role: "assistant",
+    parts: [
+      { type: "reasoning", text: entry.summary, state: "done" },
+      { type: "text", text: `Context compacted${tokensNote}.` },
+    ],
+    metadata: {
+      checkpointId: entry.id ? String(entry.id) : ROOT_WORKSPACE_CHECKPOINT_ID,
+      createdAt: createdAt(entry.timestamp),
+      parentId: entry.parentId == null ? null : String(entry.parentId),
+      synthetic: true,
+    },
+  });
+}
+
 function contentToText(content: unknown) {
   if (typeof content === "string") {
     return content;
@@ -97,9 +183,14 @@ function getOrCreateAssistantForTool(
   messages: ChatMessage[],
   entry: SessionMessageEntry
 ) {
+  // Skip synthetic bubbles (compaction/extension output): an orphan tool
+  // result must not graft a tool-call UI onto them.
   const lastAssistant = [...messages]
     .reverse()
-    .find((message) => message.role === "assistant");
+    .find(
+      (message) =>
+        message.role === "assistant" && message.metadata?.synthetic !== true
+    );
 
   if (lastAssistant) {
     return lastAssistant;
@@ -240,8 +331,8 @@ function convertEntry(
             chatId,
           })
         : null) ??
-    toolPart.displayIntent ??
-    null;
+      toolPart.displayIntent ??
+      null;
     toolPart.state = message.isError ? "output-error" : "output-available";
     toolPart.output = displayIntent
       ? { text: text || "Opened in the preview pane." }
@@ -271,6 +362,10 @@ export function piEntriesToChatMessages(
   for (const entry of entries) {
     if (isSessionMessageEntry(entry)) {
       convertEntry(normalizeEntryIds(entry), messages, chatId);
+    } else if (isDisplayedCustomMessageEntry(entry)) {
+      convertCustomMessageEntry(entry, messages);
+    } else if (isCompactionEntry(entry)) {
+      convertCompactionEntry(entry, messages);
     }
   }
 

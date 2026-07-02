@@ -10,6 +10,11 @@ export const messageMetadataSchema = z.object({
   // is being surfaced from a run's checkpointed partial rather than the
   // completed transcript.
   interrupted: z.boolean().optional(),
+  // Set on assistant-styled bubbles derived from non-message session entries
+  // (compaction summaries, extension slash-command output). These are not
+  // model answers: they never carry provider stats and must not displace the
+  // real answer as a turn's final assistant message.
+  synthetic: z.boolean().optional(),
   providerRequestIndex: z.number().optional(),
   providerStats: z
     .object({

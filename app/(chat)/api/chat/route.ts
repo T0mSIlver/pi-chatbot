@@ -28,6 +28,7 @@ import {
 import { applyProviderStatsToMessages } from "@/lib/pi/provider-stats";
 import { runPersistence } from "@/lib/pi/run-persistence";
 import { createPiSdkSession } from "@/lib/pi/session";
+import { parseSlashCommandInput } from "@/lib/pi/slash-commands";
 import {
   ensureConversationWorkspace,
   ensureProjectWorkspace,
@@ -232,21 +233,56 @@ function isImageFilePart(
   return part.type === "file" && part.mediaType.startsWith("image/");
 }
 
-async function buildPiUserContent(message: PostRequestBody["message"]) {
-  const text = getTextFromMessage(message);
-  const images = (
-    await Promise.all(
-      message.parts
-        .filter(isImageFilePart)
-        .map((part) => imagePartToPiImage(part))
-    )
-  ).filter((image) => image !== null);
+async function buildPiUserImages(message: PostRequestBody["message"]) {
+  const images = await Promise.all(
+    message.parts
+      .filter(isImageFilePart)
+      .map((part) => imagePartToPiImage(part))
+  );
+  return images.filter((image) => image !== null);
+}
 
-  if (images.length === 0) {
-    return text;
+/**
+ * Deliver the user turn to pi. Slash input goes through prompt() so extension
+ * commands execute and skill/prompt-template commands expand; /compact maps to
+ * the compaction API (a TUI-layer builtin that prompt() does not handle).
+ * Plain text keeps the command-agnostic sendUserMessage path.
+ */
+async function sendPiUserTurn(
+  piSession: Awaited<ReturnType<typeof createPiSdkSession>>,
+  message: PostRequestBody["message"]
+) {
+  const text = getTextFromMessage(message);
+  const slashCommand = parseSlashCommandInput(text);
+
+  if (slashCommand?.name === "compact") {
+    if (message.parts.some((part) => part.type === "file")) {
+      // Compaction has no message to carry them; error instead of silently
+      // dropping the attachments (surfaced to the chat via the run's error
+      // event).
+      throw new Error(
+        "Attachments can't be sent with /compact. Remove them or send them in a separate message."
+      );
+    }
+    await piSession.compact(slashCommand.args || undefined);
+    return;
   }
 
-  return [{ type: "text" as const, text }, ...images];
+  const images = await buildPiUserImages(message);
+
+  if (slashCommand) {
+    await piSession.prompt(text.trim(), {
+      images: images.length > 0 ? images : undefined,
+    });
+    return;
+  }
+
+  if (images.length === 0) {
+    await piSession.sendUserMessage(text);
+    return;
+  }
+
+  await piSession.sendUserMessage([{ type: "text" as const, text }, ...images]);
 }
 
 function waitForMockDelay(signal: AbortSignal) {
@@ -836,9 +872,7 @@ async function producePiChatRun({
       }
     });
 
-    await piSession.sendUserMessage(
-      await buildPiUserContent(requestBody.message)
-    );
+    await sendPiUserTurn(piSession, requestBody.message);
 
     await createWorkspaceCheckpoint({
       roots: workspaceRoots,

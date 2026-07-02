@@ -25,7 +25,7 @@ let extensionEnvironmentQueue = Promise.resolve();
  * the deployment — no copying into the user's `~/.pi/agent/skills` required.
  * Override the location with PI_CHATBOT_SKILLS_DIR if the build layout differs.
  */
-function getBundledSkillPaths() {
+export function getBundledSkillPaths() {
   const skillsRoot =
     process.env.PI_CHATBOT_SKILLS_DIR ?? path.join(process.cwd(), "skills");
   return [path.join(skillsRoot, "brave-search")];
@@ -44,7 +44,7 @@ function resolveNodeModulePackageDir(packageName: string, override?: string) {
   }
 }
 
-function getBundledExtensionPaths() {
+export function getBundledExtensionPaths() {
   // Resolve extension package directories WITHOUT require.resolve.
   // Turbopack/webpack rewrite `require.resolve("literal")` into a numeric module
   // id at build time (and constant-fold computed specifiers back to literals),
@@ -89,7 +89,7 @@ function getHermesProjectCwd(chat?: Chat) {
   );
 }
 
-async function withExtensionEnvironment<T>(
+export async function withExtensionEnvironment<T>(
   chat: Chat | undefined,
   action: () => Promise<T>
 ) {
