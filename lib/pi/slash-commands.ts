@@ -1,15 +1,17 @@
 import "server-only";
 
+import { mkdir } from "node:fs/promises";
 import {
   DefaultResourceLoader,
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
 import { isTestEnvironment } from "@/lib/constants";
 import { ensureLocalNetworkUser, getChatById } from "@/lib/db/queries";
+import type { Chat } from "@/lib/db/schema";
 import {
   getBundledExtensionPaths,
   getBundledSkillPaths,
-  withMcpAdapterEnvironment,
+  withExtensionEnvironment,
 } from "./session";
 import { getConversationWorkspacePath, rebaseWorkspacePath } from "./workspace";
 
@@ -57,6 +59,7 @@ async function resolveCommandWorkspace(chatId: string) {
   if (chat) {
     return {
       cacheKey: chatId,
+      chat,
       workspacePath: rebaseWorkspacePath(chat.workspacePath),
     };
   }
@@ -67,6 +70,7 @@ async function resolveCommandWorkspace(chatId: string) {
   const localUser = await ensureLocalNetworkUser();
   return {
     cacheKey: "__global__",
+    chat: undefined,
     workspacePath: getConversationWorkspacePath({
       userId: localUser.id,
       projectId: null,
@@ -76,23 +80,24 @@ async function resolveCommandWorkspace(chatId: string) {
 }
 
 async function computePiSlashCommands(
+  chat: Chat | undefined,
   workspacePath: string
 ): Promise<PiSlashCommand[]> {
   const agentDir = getAgentDir();
 
-  const resourceLoader = await withMcpAdapterEnvironment(
-    workspacePath,
-    async () => {
-      const loader = new DefaultResourceLoader({
-        cwd: workspacePath,
-        agentDir,
-        additionalExtensionPaths: getBundledExtensionPaths(),
-        additionalSkillPaths: getBundledSkillPaths(),
-      });
-      await loader.reload();
-      return loader;
-    }
-  );
+  const resourceLoader = await withExtensionEnvironment(chat, async () => {
+    // The probe workspace for un-created chats is never materialized by the
+    // chat flow; the loader needs an existing cwd to scan.
+    await mkdir(workspacePath, { recursive: true });
+    const loader = new DefaultResourceLoader({
+      cwd: workspacePath,
+      agentDir,
+      additionalExtensionPaths: getBundledExtensionPaths(),
+      additionalSkillPaths: getBundledSkillPaths(),
+    });
+    await loader.reload();
+    return loader;
+  });
 
   const commands: PiSlashCommand[] = [...WEB_BUILTIN_COMMANDS];
 
@@ -151,7 +156,8 @@ export async function listPiSlashCommands(chatId: string) {
     return WEB_BUILTIN_COMMANDS;
   }
 
-  const { cacheKey, workspacePath } = await resolveCommandWorkspace(chatId);
+  const { cacheKey, chat, workspacePath } =
+    await resolveCommandWorkspace(chatId);
 
   const now = Date.now();
   const cached = commandCache.get(cacheKey);
@@ -159,7 +165,7 @@ export async function listPiSlashCommands(chatId: string) {
     return cached.value;
   }
 
-  const value = computePiSlashCommands(workspacePath);
+  const value = computePiSlashCommands(chat, workspacePath);
   commandCache.set(cacheKey, { expiresAt: now + CACHE_TTL_MS, value });
   value.catch(() => {
     // Only evict our own entry — a post-TTL recompute may have replaced it
