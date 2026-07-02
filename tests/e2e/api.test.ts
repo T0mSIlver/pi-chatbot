@@ -112,7 +112,7 @@ test.describe("Chat API Integration", () => {
     await expect(toolBlock).toBeVisible({
       timeout: 30_000,
     });
-    await expect(toolBlock).toContainText("read");
+    await expect(toolBlock).toContainText(/read/i);
   });
 
   test("renders interleaved thinking inline around tool calls", async ({

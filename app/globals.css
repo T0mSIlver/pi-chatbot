@@ -92,6 +92,17 @@
   --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
   --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Tool-call rendering: diff tints and the bash terminal surface */
+  --tool-add-fg: oklch(0.44 0.11 150);
+  --tool-add-bg: oklch(0.72 0.11 150 / 0.13);
+  --tool-del-fg: oklch(0.5 0.14 25);
+  --tool-del-bg: oklch(0.63 0.14 25 / 0.11);
+  --tool-term-bg: oklch(0.205 0.005 260);
+  --tool-term-fg: oklch(0.88 0.005 260);
+  --tool-term-muted: oklch(0.62 0.01 260);
+  --tool-term-ok: oklch(0.78 0.13 150);
+  --tool-term-err: oklch(0.75 0.13 25);
 }
 
 .dark {
@@ -138,6 +149,12 @@
   --shadow-composer-focus:
     0 0 0 1px oklch(1 0 0 / 0.1), 0 4px 16px -4px oklch(0 0 0 / 0.3),
     inset 0 1px 0 oklch(1 0 0 / 0.04);
+
+  --tool-add-fg: oklch(0.78 0.13 150);
+  --tool-add-bg: oklch(0.72 0.13 150 / 0.14);
+  --tool-del-fg: oklch(0.75 0.13 25);
+  --tool-del-bg: oklch(0.65 0.16 25 / 0.13);
+  --tool-term-bg: oklch(0.16 0.005 260);
 }
 
 @layer base {

@@ -28,7 +28,6 @@ import {
 import { applyProviderStatsToMessages } from "@/lib/pi/provider-stats";
 import { runPersistence } from "@/lib/pi/run-persistence";
 import { createPiSdkSession } from "@/lib/pi/session";
-import { previewToolOutput } from "@/lib/pi/tool-output";
 import {
   ensureConversationWorkspace,
   ensureProjectWorkspace,
@@ -48,6 +47,7 @@ import {
   writeWorkspaceChanges,
 } from "@/lib/pi/workspace-files";
 import { checkIpRateLimit } from "@/lib/ratelimit";
+import { wrapToolOutput } from "@/lib/tool-streaming";
 import type { ChatMessage } from "@/lib/types";
 import { generateUUID, getTextFromMessage } from "@/lib/utils";
 import { type PostRequestBody, postRequestBodySchema } from "./schema";
@@ -72,6 +72,13 @@ function contentToText(content: unknown) {
     .filter((block) => block.type === "text" && typeof block.text === "string")
     .map((block) => block.text)
     .join("");
+}
+
+function previewText(text: string) {
+  if (text.length <= 8000) {
+    return text;
+  }
+  return `${text.slice(0, 8000)}\n\n[truncated for display]`;
 }
 
 function createInitialConversationTitle(message: PostRequestBody["message"]) {
@@ -790,11 +797,17 @@ async function producePiChatRun({
       }
 
       if (event.type === "tool_execution_update") {
+        const partial = event.partialResult as
+          | { content?: unknown; details?: unknown }
+          | undefined;
         run.emit({
           type: "tool-update",
           toolCallId: event.toolCallId,
           toolName: event.toolName,
-          output: previewToolOutput(event.partialResult),
+          output: wrapToolOutput(
+            previewText(contentToText(partial?.content)),
+            partial?.details
+          ),
         });
       }
 
@@ -808,8 +821,8 @@ async function producePiChatRun({
           toolCallId: event.toolCallId,
           toolName: event.toolName,
           output: displayIntent
-            ? text || "Opened in the preview pane."
-            : previewToolOutput(text || event.result?.details),
+            ? { text: text || "Opened in the preview pane." }
+            : wrapToolOutput(previewText(text), event.result?.details),
           displayIntent: displayIntent ?? undefined,
           errorText: event.isError ? text || "Tool failed" : undefined,
           isError: event.isError,

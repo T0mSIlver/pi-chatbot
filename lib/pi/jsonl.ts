@@ -3,11 +3,11 @@ import "server-only";
 import { readFile } from "node:fs/promises";
 import { SessionManager } from "@mariozechner/pi-coding-agent";
 import { formatISO } from "date-fns";
+import { wrapToolOutput } from "@/lib/tool-streaming";
 import type { ChatMessage, ChatMessagePart, PiToolUIPart } from "@/lib/types";
 import { generateUUID } from "@/lib/utils";
 import { readProviderCaptures } from "./provider-captures";
 import { applyProviderStatsToMessages } from "./provider-stats";
-import { previewToolOutput } from "./tool-output";
 import { ROOT_WORKSPACE_CHECKPOINT_ID } from "./workspace-checkpoints";
 import {
   displayIntentFromShowcaseToolInput,
@@ -240,12 +240,12 @@ function convertEntry(
             chatId,
           })
         : null) ??
-      toolPart.displayIntent ??
-      null;
+    toolPart.displayIntent ??
+    null;
     toolPart.state = message.isError ? "output-error" : "output-available";
     toolPart.output = displayIntent
-      ? text || "Opened in the preview pane."
-      : previewToolOutput(text || message.details);
+      ? { text: text || "Opened in the preview pane." }
+      : wrapToolOutput(text, message.details);
     toolPart.displayIntent = displayIntent ?? undefined;
     toolPart.errorText = message.isError ? text || "Tool failed" : undefined;
     toolPart.isError = message.isError;

@@ -138,7 +138,9 @@ async function fetchWithTimeout({
         throw new Error("fetch_webpage was aborted.");
       }
 
-      throw new Error(`Jina Reader timed out after ${timeoutMs / 1000}s.`);
+      throw new Error(
+        `timeout ${timeoutMs / 1000}s — no response within ${timeoutMs / 1000} seconds; the request was aborted.`
+      );
     }
 
     throw error;
@@ -214,8 +216,16 @@ export function createFetchWebpageTool(): ToolDefinition {
       const responseText = await response.text();
 
       if (!response.ok) {
+        // Structured prefix ("HTTP 404 —" / "reader 503 —") so the chat
+        // renderer can chip the status without parsing prose. Reader-side
+        // failures (5xx, quota/rate statuses) are distinguished from the
+        // target page's own 4xx.
+        const status = response.status;
+        const isReaderFailure =
+          status >= 500 || status === 402 || status === 429;
+        const kind = isReaderFailure ? "reader" : "HTTP";
         throw new Error(
-          `Jina Reader failed with ${response.status} ${response.statusText}: ${responseText.slice(0, 500)}`
+          `${kind} ${status} — ${response.statusText || "request failed"}: ${responseText.slice(0, 500)}`
         );
       }
 
