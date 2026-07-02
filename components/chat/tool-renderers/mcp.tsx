@@ -32,8 +32,16 @@ export function McpToolRow({ part }: ToolRendererProps) {
   const output = normalizeToolOutput(part.output);
   const running =
     part.state === "input-streaming" || part.state === "input-available";
-  const isError = part.state === "output-error";
   const settled = part.state === "output-available";
+  // pi-mcp-adapter reports many failures as a successful result carrying
+  // details.error, not as state "output-error" — treat both as failed.
+  const detailsError = output.details?.error;
+  const isError =
+    part.state === "output-error" ||
+    (settled &&
+      detailsError !== undefined &&
+      detailsError !== null &&
+      detailsError !== false);
 
   const identity = getMcpIdentity(part.toolName, output);
   const summary = streaming ? undefined : firstArgSummary(args);
@@ -57,7 +65,24 @@ export function McpToolRow({ part }: ToolRendererProps) {
   const hasArgs = Object.keys(args).length > 0;
 
   let resultBody: ReactNode;
-  if (settled) {
+  if (isError) {
+    const errorDetail =
+      typeof detailsError === "string"
+        ? detailsError
+        : detailsError !== undefined && detailsError !== null
+          ? JSON.stringify(detailsError, null, 2)
+          : undefined;
+    resultBody = (
+      <ToolErrorBody
+        hint={
+          errorDetail && output.text && errorDetail !== output.text
+            ? errorDetail
+            : undefined
+        }
+        message={output.text ?? part.errorText ?? errorDetail ?? "Tool failed"}
+      />
+    );
+  } else if (settled) {
     if (output.text) {
       resultBody = (
         <CappedPane
@@ -81,16 +106,15 @@ export function McpToolRow({ part }: ToolRendererProps) {
     }
   }
 
-  const body = isError ? (
-    <ToolErrorBody message={part.errorText ?? "Tool failed"} />
-  ) : hasArgs || resultBody ? (
-    <>
-      {hasArgs && <ArgsGrid args={args} streaming={streaming} />}
-      {resultBody && (
-        <div className={hasArgs ? "border-t" : undefined}>{resultBody}</div>
-      )}
-    </>
-  ) : undefined;
+  const body =
+    hasArgs || resultBody ? (
+      <>
+        {hasArgs && <ArgsGrid args={args} streaming={streaming} />}
+        {resultBody && (
+          <div className={hasArgs ? "border-t" : undefined}>{resultBody}</div>
+        )}
+      </>
+    ) : undefined;
 
   return (
     <ToolRow
