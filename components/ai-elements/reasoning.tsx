@@ -12,7 +12,6 @@ import { cjk } from "@streamdown/cjk";
 import { code } from "@streamdown/code";
 import { math } from "@streamdown/math";
 import { mermaid } from "@streamdown/mermaid";
-import { ChevronDownIcon } from "lucide-react";
 import {
   createContext,
   memo,
@@ -25,6 +24,7 @@ import {
 } from "react";
 import { Streamdown } from "streamdown";
 import { MarkdownTable } from "./markdown-table";
+import { Shimmer } from "./shimmer";
 
 interface ReasoningContextValue {
   isStreaming: boolean;
@@ -51,7 +51,6 @@ export type ReasoningProps = ComponentProps<typeof Collapsible> & {
   duration?: number;
 };
 
-const AUTO_CLOSE_DELAY = 1000;
 const MS_IN_S = 1000;
 
 export const Reasoning = memo(
@@ -65,11 +64,11 @@ export const Reasoning = memo(
     children,
     ...props
   }: ReasoningProps) => {
-    const resolvedDefaultOpen = defaultOpen ?? isStreaming;
-    const shouldAutoManageStreaming = defaultOpen !== false;
-
+    // The open state belongs to the user: no auto-open/auto-close
+    // side effects that could fight a manual toggle or leave the
+    // block locked shut.
     const [isOpen, setIsOpen] = useControllableState<boolean>({
-      defaultProp: resolvedDefaultOpen,
+      defaultProp: defaultOpen ?? false,
       onChange: onOpenChange,
       prop: open,
     });
@@ -78,14 +77,11 @@ export const Reasoning = memo(
       prop: durationProp,
     });
 
-    const hasEverStreamedRef = useRef(isStreaming);
-    const [hasAutoClosed, setHasAutoClosed] = useState(false);
     const startTimeRef = useRef<number | null>(null);
 
     // Track when streaming starts and compute duration
     useEffect(() => {
       if (isStreaming) {
-        hasEverStreamedRef.current = true;
         if (startTimeRef.current === null) {
           startTimeRef.current = Date.now();
         }
@@ -94,37 +90,6 @@ export const Reasoning = memo(
         startTimeRef.current = null;
       }
     }, [isStreaming, setDuration]);
-
-    // Auto-open when streaming starts unless this is a manual preview.
-    useEffect(() => {
-      if (isStreaming && !isOpen && shouldAutoManageStreaming) {
-        setIsOpen(true);
-      }
-    }, [isStreaming, isOpen, setIsOpen, shouldAutoManageStreaming]);
-
-    // Auto-close when streaming ends only for the legacy auto-managed mode.
-    useEffect(() => {
-      if (
-        hasEverStreamedRef.current &&
-        !isStreaming &&
-        isOpen &&
-        !hasAutoClosed &&
-        shouldAutoManageStreaming
-      ) {
-        const timer = setTimeout(() => {
-          setIsOpen(false);
-          setHasAutoClosed(true);
-        }, AUTO_CLOSE_DELAY);
-
-        return () => clearTimeout(timer);
-      }
-    }, [
-      isStreaming,
-      isOpen,
-      setIsOpen,
-      hasAutoClosed,
-      shouldAutoManageStreaming,
-    ]);
 
     const handleOpenChange = useCallback(
       (newOpen: boolean) => {
@@ -216,11 +181,21 @@ export const ReasoningTrigger = memo(
     const previewRef = useRef<HTMLDivElement>(null);
     const [isPreviewOverflowing, setIsPreviewOverflowing] = useState(false);
     const previewLines = getReasoningPreviewLines(preview);
-    const previewText = previewLines[0] ?? "Thinking...";
+    // While streaming, surface the newest thought; settled, the first
+    // line summarizes the block.
+    const previewText =
+      (isStreaming ? previewLines.at(-1) : previewLines[0]) ?? "Thinking...";
     const hasCustomPreview = children !== undefined;
     const hasMultipleLines = previewLines.length > 1;
+    // Overflow measurement can misdetect (fonts, timing); the length
+    // fallback guarantees long one-liners stay reopenable, and a
+    // streaming block is always expandable since it is still growing.
     const isExpandable =
-      hasCustomPreview || hasMultipleLines || isPreviewOverflowing;
+      hasCustomPreview ||
+      hasMultipleLines ||
+      isPreviewOverflowing ||
+      isStreaming ||
+      previewText.length > 160;
 
     useEffect(() => {
       if (hasCustomPreview || hasMultipleLines) {
@@ -262,30 +237,40 @@ export const ReasoningTrigger = memo(
     return (
       <div
         className={cn(
-          "group/reasoning relative w-full overflow-hidden rounded-md px-2 py-1.5 transition-colors",
+          // Negative margin keeps the preview text flush with regular
+          // content while the hover background bleeds past the edge.
+          "group/reasoning -mx-2 relative w-[calc(100%+1rem)] overflow-hidden rounded-md px-2 py-1.5 transition-colors",
           isExpandable && "hover:bg-muted/20",
           className
         )}
       >
         {children ?? (
           <div
-            className={cn(
-              "relative h-[1lh] overflow-hidden text-[13px] leading-[1.65]",
-              isStreaming && "animate-pulse"
-            )}
+            className="relative h-[1lh] overflow-hidden text-[13px] leading-[1.65]"
             ref={previewRef}
           >
-            <ReasoningMarkdown
-              className="line-clamp-1 overflow-hidden"
-              streamdownClassName="!space-y-0 [&_*]:my-0 [&_h1]:inline [&_h2]:inline [&_h3]:inline [&_h4]:inline [&_h5]:inline [&_h6]:inline [&_p]:inline"
-              text={previewText}
-            />
+            {isStreaming ? (
+              // Same treatment as streaming tool args: motion, not badges.
+              <Shimmer
+                as="div"
+                className="truncate text-[13px] leading-[1.65]"
+                duration={1.4}
+              >
+                {previewText}
+              </Shimmer>
+            ) : (
+              <ReasoningMarkdown
+                className="line-clamp-1 overflow-hidden"
+                streamdownClassName="!space-y-0 [&_*]:my-0 [&_h1]:inline [&_h2]:inline [&_h3]:inline [&_h4]:inline [&_h5]:inline [&_h6]:inline [&_p]:inline"
+                text={previewText}
+              />
+            )}
           </div>
         )}
         {isExpandable && (
           <CollapsibleTrigger
             aria-label="Expand reasoning"
-            className="absolute inset-0 rounded-md focus-visible:ring-2 focus-visible:ring-ring/60"
+            className="absolute inset-0 cursor-pointer rounded-md focus-visible:ring-2 focus-visible:ring-ring/60"
             {...props}
           >
             <span className="sr-only">Expand reasoning</span>
@@ -332,7 +317,10 @@ export const ReasoningContent = memo(
     return (
       <div
         className={cn(
-          "group/reasoning-content relative cursor-pointer animate-in fade-in-0 duration-200 [overflow-anchor:none]",
+          // No indicator while open: pointer cursor and a hover tint
+          // signal that clicking anywhere collapses the block. Negative
+          // margin keeps the text flush with regular content.
+          "group/reasoning-content -mx-2 relative w-[calc(100%+1rem)] cursor-pointer rounded-md transition-colors animate-in fade-in-0 duration-200 [overflow-anchor:none] hover:bg-muted/20",
           className
         )}
         onClick={handleContentClick}
@@ -344,11 +332,12 @@ export const ReasoningContent = memo(
         >
           <ReasoningMarkdown text={children} {...props} />
         </div>
+        {/* Invisible to pointer users; reachable with the keyboard. */}
         <CollapsibleTrigger
           aria-label="Collapse reasoning"
-          className="absolute top-1 right-1 rounded-sm p-1 text-muted-foreground/40 opacity-45 transition-opacity hover:bg-muted/30 hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/60 group-hover/reasoning-content:opacity-100"
+          className="pointer-events-none absolute top-1 right-1 rounded-sm p-1 text-[11px] text-muted-foreground opacity-0 focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/60"
         >
-          <ChevronDownIcon className="size-3 rotate-180" />
+          Collapse
         </CollapsibleTrigger>
       </div>
     );

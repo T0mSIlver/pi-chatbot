@@ -6,6 +6,7 @@ export function useScrollToBottom() {
   const [isAtBottom, setIsAtBottom] = useState(true);
   const isAtBottomRef = useRef(true);
   const isUserScrollingRef = useRef(false);
+  const isUserClickingRef = useRef(false);
 
   useEffect(() => {
     isAtBottomRef.current = isAtBottom;
@@ -36,6 +37,7 @@ export function useScrollToBottom() {
     }
 
     let scrollTimeout: ReturnType<typeof setTimeout>;
+    let clickTimeout: ReturnType<typeof setTimeout>;
 
     const handleScroll = () => {
       isUserScrollingRef.current = true;
@@ -50,10 +52,30 @@ export function useScrollToBottom() {
       }, 150);
     };
 
+    // A click inside the conversation (expanding a tool row, "Show all",
+    // toggling reasoning) often grows the content. That growth must not
+    // trigger the stick-to-bottom snap — it would shift everything above
+    // the clicked element. Suppress auto-scroll briefly, then re-evaluate
+    // whether we are still near the bottom so streaming doesn't yank the
+    // page back down afterwards.
+    const handleClick = () => {
+      isUserClickingRef.current = true;
+      clearTimeout(clickTimeout);
+      clickTimeout = setTimeout(() => {
+        isUserClickingRef.current = false;
+        const atBottom = checkIfAtBottom();
+        setIsAtBottom(atBottom);
+        isAtBottomRef.current = atBottom;
+      }, 500);
+    };
+
     container.addEventListener("scroll", handleScroll, { passive: true });
+    container.addEventListener("click", handleClick, { passive: true });
     return () => {
       container.removeEventListener("scroll", handleScroll);
+      container.removeEventListener("click", handleClick);
       clearTimeout(scrollTimeout);
+      clearTimeout(clickTimeout);
     };
   }, [checkIfAtBottom]);
 
@@ -64,7 +86,11 @@ export function useScrollToBottom() {
     }
 
     const scrollIfNeeded = () => {
-      if (isAtBottomRef.current && !isUserScrollingRef.current) {
+      if (
+        isAtBottomRef.current &&
+        !isUserScrollingRef.current &&
+        !isUserClickingRef.current
+      ) {
         requestAnimationFrame(() => {
           container.scrollTo({
             top: container.scrollHeight,
