@@ -7,7 +7,7 @@ import {
   createAgentSession,
   DefaultResourceLoader,
   SessionManager,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import type { Chat } from "@/lib/db/schema";
 import { createFetchWebpageTool } from "./fetch-webpage-tool";
 import { writeMcpConfigForChat } from "./mcp-config";

@@ -1,7 +1,7 @@
 import "server-only";
 
 import { readFile } from "node:fs/promises";
-import { SessionManager } from "@mariozechner/pi-coding-agent";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { formatISO } from "date-fns";
 import { wrapToolOutput } from "@/lib/tool-streaming";
 import type { ChatMessage, ChatMessagePart, PiToolUIPart } from "@/lib/types";

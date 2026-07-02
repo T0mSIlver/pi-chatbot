@@ -6,7 +6,7 @@ Proxmox host) · Scope: **one user, ≤ 1 active agent at a time**.
 > This supersedes the original (pre-`pi-integration`) version of this doc, which described a
 > Vercel-AI-SDK + Redis + `resumable-stream` + `Stream`-table design. **That design no longer
 > exists in the codebase.** The `pi-integration` merge (commit `d8da62a`) rearchitected the chat
-> turn around an in-process control plane and the `@mariozechner/pi-coding-agent` SDK. This doc
+> turn around an in-process control plane and the `@earendil-works/pi-coding-agent` SDK. This doc
 > reflects the *current* architecture and the robustness work layered on top of it.
 
 ---

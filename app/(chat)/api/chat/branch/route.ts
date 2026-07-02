@@ -1,4 +1,4 @@
-import { SessionManager } from "@mariozechner/pi-coding-agent";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { z } from "zod";
 import { saveChat } from "@/lib/db/queries";
 import { ChatbotError } from "@/lib/errors";

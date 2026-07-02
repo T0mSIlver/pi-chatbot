@@ -2,12 +2,12 @@ import "server-only";
 
 import { existsSync } from "node:fs";
 import path from "node:path";
-import type { Model } from "@mariozechner/pi-ai";
+import type { Model } from "@earendil-works/pi-ai";
 import {
   AuthStorage,
   getAgentDir,
   ModelRegistry,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { DEFAULT_CHAT_MODEL } from "@/lib/ai/models";
 
 function splitModelId(modelId: string) {

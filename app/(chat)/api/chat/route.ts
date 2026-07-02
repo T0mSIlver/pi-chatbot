@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { SessionManager } from "@mariozechner/pi-coding-agent";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { ipAddress } from "@vercel/functions";
 import { auth } from "@/app/(auth)/auth";
 import { allowedModelIds, DEFAULT_CHAT_MODEL } from "@/lib/ai/models";

@@ -7,11 +7,11 @@ import {
   registerApiProvider,
   type SimpleStreamOptions,
   type StreamOptions,
-} from "@mariozechner/pi-ai";
+} from "@earendil-works/pi-ai/compat";
 import {
-  streamOpenAICompletions,
-  streamSimpleOpenAICompletions,
-} from "@mariozechner/pi-ai/openai-completions";
+  stream as streamOpenAICompletions,
+  streamSimple as streamSimpleOpenAICompletions,
+} from "@earendil-works/pi-ai/api/openai-completions";
 import { runWithProviderCapture } from "./provider-capture-transport";
 import type { ProviderCaptureContext } from "./provider-captures";
 
