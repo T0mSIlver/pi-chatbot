@@ -1,4 +1,7 @@
-import { isFinalAssistantAnswer } from "@/lib/chat-turns";
+import {
+  isFinalAssistantAnswer,
+  isSyntheticAssistantMessage,
+} from "@/lib/chat-turns";
 import { splitSsePayloads } from "@/lib/openai-inspect";
 import type { ChatMessage, ProviderTokenStats } from "@/lib/types";
 
@@ -296,7 +299,10 @@ function createTurn(
 ): Turn | null {
   const assistantIndexes: number[] = [];
   for (let index = startIndex; index < endIndex; index += 1) {
-    if (messages[index].role === "assistant") {
+    if (
+      messages[index].role === "assistant" &&
+      !isSyntheticAssistantMessage(messages[index])
+    ) {
       assistantIndexes.push(index);
     }
   }

@@ -256,6 +256,14 @@ async function sendPiUserTurn(
   const slashCommand = parseSlashCommandInput(text);
 
   if (slashCommand?.name === "compact") {
+    if (message.parts.some((part) => part.type === "file")) {
+      // Compaction has no message to carry them; error instead of silently
+      // dropping the attachments (surfaced to the chat via the run's error
+      // event).
+      throw new Error(
+        "Attachments can't be sent with /compact. Remove them or send them in a separate message."
+      );
+    }
     await piSession.compact(slashCommand.args || undefined);
     return;
   }

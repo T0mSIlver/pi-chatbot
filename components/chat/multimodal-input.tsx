@@ -434,6 +434,9 @@ function PureMultimodalInput({
       <PromptInput
         className="[&>div]:rounded-2xl [&>div]:border [&>div]:border-border/30 [&>div]:bg-card/70 [&>div]:shadow-[var(--shadow-composer)] [&>div]:transition-shadow [&>div]:duration-300 [&>div]:focus-within:shadow-[var(--shadow-composer-focus)]"
         onSubmit={async () => {
+          // Clicking Send bypasses the textarea's keydown handling, so make
+          // sure the slash menu never outlives the submit.
+          setSlashOpen(false);
           if (input.startsWith("/")) {
             const query = input.slice(1).trim();
             const cmd = slashCommands.find((c) => c.name === query);

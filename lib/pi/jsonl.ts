@@ -110,6 +110,7 @@ function convertCustomMessageEntry(
       checkpointId: entry.id ? String(entry.id) : ROOT_WORKSPACE_CHECKPOINT_ID,
       createdAt: createdAt(entry.timestamp),
       parentId: entry.parentId == null ? null : String(entry.parentId),
+      synthetic: true,
     },
   });
 }
@@ -132,6 +133,7 @@ function convertCompactionEntry(
       checkpointId: entry.id ? String(entry.id) : ROOT_WORKSPACE_CHECKPOINT_ID,
       createdAt: createdAt(entry.timestamp),
       parentId: entry.parentId == null ? null : String(entry.parentId),
+      synthetic: true,
     },
   });
 }
@@ -181,9 +183,14 @@ function getOrCreateAssistantForTool(
   messages: ChatMessage[],
   entry: SessionMessageEntry
 ) {
+  // Skip synthetic bubbles (compaction/extension output): an orphan tool
+  // result must not graft a tool-call UI onto them.
   const lastAssistant = [...messages]
     .reverse()
-    .find((message) => message.role === "assistant");
+    .find(
+      (message) =>
+        message.role === "assistant" && message.metadata?.synthetic !== true
+    );
 
   if (lastAssistant) {
     return lastAssistant;

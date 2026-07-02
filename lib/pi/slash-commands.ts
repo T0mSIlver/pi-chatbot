@@ -38,13 +38,14 @@ const WEB_BUILTIN_COMMANDS: PiSlashCommand[] = [
 ];
 
 /**
- * Parse "/name args" input. Returns null for anything that is not a single
- * slash token at the start — notably absolute paths ("/home/x/file") don't
- * match, so they flow to the model as plain text. Unknown command names are
- * fine: pi's prompt() forwards them to the model verbatim.
+ * Parse "/name args" input. Returns null for anything that is not a slash
+ * token followed by horizontal whitespace on the first line — notably
+ * absolute paths ("/home/x/file") and multi-line prose whose first line is a
+ * lone slash token ("/done\nnotes") flow to the model as plain text. Unknown
+ * command names are fine: pi's prompt() forwards them to the model verbatim.
  */
 export function parseSlashCommandInput(text: string) {
-  const match = text.trim().match(/^\/([\w:.-]+)(?:\s+([\s\S]+))?$/);
+  const match = text.trim().match(/^\/([\w:.-]+)(?:[ \t]+([\s\S]+))?$/);
   if (!match) {
     return null;
   }
@@ -160,6 +161,12 @@ export async function listPiSlashCommands(chatId: string) {
 
   const value = computePiSlashCommands(workspacePath);
   commandCache.set(cacheKey, { expiresAt: now + CACHE_TTL_MS, value });
-  value.catch(() => commandCache.delete(cacheKey));
+  value.catch(() => {
+    // Only evict our own entry — a post-TTL recompute may have replaced it
+    // with a healthy one by the time this rejection lands.
+    if (commandCache.get(cacheKey)?.value === value) {
+      commandCache.delete(cacheKey);
+    }
+  });
   return value;
 }

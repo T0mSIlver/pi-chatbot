@@ -20,12 +20,25 @@ export function endsWithAssistantText(message: ChatMessage) {
   );
 }
 
+/**
+ * Assistant-styled bubbles derived from non-message session entries
+ * (compaction summaries, extension command output). They are never a turn's
+ * answer and must not displace the message that is.
+ */
+export function isSyntheticAssistantMessage(message: ChatMessage) {
+  return message.role === "assistant" && message.metadata?.synthetic === true;
+}
+
 export function isFinalAssistantAnswer(
   messages: ChatMessage[],
   messageIndex: number
 ) {
   const message = messages[messageIndex];
-  if (!message || !endsWithAssistantText(message)) {
+  if (
+    !message ||
+    isSyntheticAssistantMessage(message) ||
+    !endsWithAssistantText(message)
+  ) {
     return false;
   }
 
@@ -34,7 +47,10 @@ export function isFinalAssistantAnswer(
     if (candidate.role === "user") {
       break;
     }
-    if (candidate.role === "assistant") {
+    if (
+      candidate.role === "assistant" &&
+      !isSyntheticAssistantMessage(candidate)
+    ) {
       return false;
     }
   }
