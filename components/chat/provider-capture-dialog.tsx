@@ -16,6 +16,10 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import {
+  compareProviderCaptures,
+  isOpenAICompatibleCapture,
+} from "@/lib/openai-compatible";
+import {
   buildCopyPayload,
   parseInspectorRequest,
   parseInspectorResponse,
@@ -137,7 +141,13 @@ export function ProviderCaptureDialog({
     { revalidateOnFocus: false }
   );
 
-  const captures = useMemo(() => data?.captures ?? [], [data]);
+  const captures = useMemo(
+    () =>
+      (data?.captures ?? [])
+        .filter(isOpenAICompatibleCapture)
+        .sort(compareProviderCaptures),
+    [data]
+  );
   const recoveredIds = useMemo(() => computeRecoveredIds(captures), [captures]);
   const selectedCapture = useMemo(
     () => captures.find((capture) => capture.id === selectedId) ?? captures[0],
@@ -255,7 +265,8 @@ export function ProviderCaptureDialog({
                   className="p-3 text-muted-foreground text-sm"
                   data-testid="provider-capture-empty"
                 >
-                  No provider captures recorded for this conversation yet.
+                  No OpenAI-compatible provider captures recorded for this
+                  conversation yet.
                 </div>
               ) : (
                 <div className="flex flex-col">
@@ -300,57 +311,68 @@ export function ProviderCaptureDialog({
           </div>
 
           <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-md border border-border">
-            <div className="flex min-h-10 flex-wrap items-center gap-2 border-border border-b px-3 py-2">
-              <div className="flex rounded-md border border-border bg-muted/30 p-0.5">
-                {(["request", "response"] as const).map((tab) => (
-                  <button
-                    className={cn(
-                      "h-7 rounded px-3 font-medium text-xs capitalize transition-colors",
-                      activeTab === tab
-                        ? "bg-background text-foreground shadow-sm"
-                        : "text-muted-foreground hover:text-foreground"
-                    )}
-                    data-testid={`provider-capture-${tab}-tab`}
-                    key={tab}
-                    onClick={() => setActiveTab(tab)}
-                    type="button"
-                  >
-                    {tab}
-                  </button>
-                ))}
-              </div>
-
-              {canToggleResponseMode && (
+            <div className="grid min-h-10 gap-2 border-border border-b px-3 py-2 xl:grid-cols-[minmax(0,1fr)_auto]">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <div className="flex rounded-md border border-border bg-muted/30 p-0.5">
                   {(
                     [
-                      ["collected", "Collected"],
-                      ["stream", "Chunks"],
+                      ["request", "Request"],
+                      ["response", "Response"],
                     ] as const
-                  ).map(([value, label]) => (
+                  ).map(([tab, label]) => (
                     <button
                       className={cn(
                         "h-7 rounded px-3 font-medium text-xs transition-colors",
-                        responseMode === value
+                        activeTab === tab
                           ? "bg-background text-foreground shadow-sm"
                           : "text-muted-foreground hover:text-foreground"
                       )}
-                      data-testid={`provider-capture-response-mode-${value}`}
-                      key={value}
-                      onClick={() => setResponseMode(value)}
+                      data-testid={`provider-capture-${tab}-tab`}
+                      key={tab}
+                      onClick={() => setActiveTab(tab)}
                       type="button"
                     >
                       {label}
                     </button>
                   ))}
                 </div>
-              )}
 
-              <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1">
+                {canToggleResponseMode && (
+                  <div className="flex rounded-md border border-border bg-muted/30 p-0.5">
+                    {(
+                      [
+                        ["collected", "Collected"],
+                        ["stream", "Chunks"],
+                      ] as const
+                    ).map(([value, label]) => (
+                      <button
+                        className={cn(
+                          "h-7 rounded px-3 font-medium text-xs transition-colors",
+                          responseMode === value
+                            ? "bg-background text-foreground shadow-sm"
+                            : "text-muted-foreground hover:text-foreground"
+                        )}
+                        data-testid={`provider-capture-response-mode-${value}`}
+                        key={value}
+                        onClick={() => setResponseMode(value)}
+                        type="button"
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex min-w-0 flex-wrap items-center gap-1.5 xl:justify-end">
                 {selectedStats && (
-                  <ProviderStatsToggle className="mr-2" stats={selectedStats} />
+                  <ProviderStatsToggle
+                    className="min-h-8 rounded-md border border-border bg-muted/10 px-1.5"
+                    stats={selectedStats}
+                  />
                 )}
                 <Button
+                  className="h-8"
                   disabled={!selectedCapture}
                   onClick={copySelected}
                   size="sm"
@@ -361,6 +383,7 @@ export function ProviderCaptureDialog({
                   Copy
                 </Button>
                 <Button
+                  className="h-8"
                   disabled={!selectedCapture}
                   onClick={downloadSelected}
                   size="sm"

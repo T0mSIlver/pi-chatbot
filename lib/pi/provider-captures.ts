@@ -2,6 +2,10 @@ import "server-only";
 
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  compareProviderCaptures,
+  isOpenAICompatibleCapture,
+} from "@/lib/openai-compatible";
 import type { ProviderTokenStats } from "@/lib/types";
 import { extractProviderStatsFromResponse } from "./provider-stats";
 
@@ -185,11 +189,13 @@ export async function readProviderCaptures(conversationPath: string) {
         }
       })
       .filter(isProviderCaptureRecord)
+      .filter(isOpenAICompatibleCapture)
       .map((record) => ({
         ...record,
         stats:
           record.stats ?? extractProviderStatsFromResponse(record.response),
-      }));
+      }))
+      .sort(compareProviderCaptures);
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return [];
