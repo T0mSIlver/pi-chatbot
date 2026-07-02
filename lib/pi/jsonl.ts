@@ -3,6 +3,7 @@ import "server-only";
 import { readFile } from "node:fs/promises";
 import { SessionManager } from "@mariozechner/pi-coding-agent";
 import { formatISO } from "date-fns";
+import { wrapToolOutput } from "@/lib/tool-streaming";
 import type { ChatMessage, ChatMessagePart, PiToolUIPart } from "@/lib/types";
 import { generateUUID } from "@/lib/utils";
 import { readProviderCaptures } from "./provider-captures";
@@ -243,8 +244,8 @@ function convertEntry(
       null;
     toolPart.state = message.isError ? "output-error" : "output-available";
     toolPart.output = displayIntent
-      ? text || "Opened in the preview pane."
-      : (message.details ?? text);
+      ? { text: text || "Opened in the preview pane." }
+      : wrapToolOutput(text, message.details);
     toolPart.displayIntent = displayIntent ?? undefined;
     toolPart.errorText = message.isError ? text || "Tool failed" : undefined;
     toolPart.isError = message.isError;

@@ -4,19 +4,12 @@ import type { ChatMessage, PiToolUIPart, SetMessages } from "@/lib/types";
 import { cn, sanitizeText } from "@/lib/utils";
 import { MessageContent, MessageResponse } from "../ai-elements/message";
 import { Shimmer } from "../ai-elements/shimmer";
-import {
-  Tool,
-  ToolContent,
-  ToolHeader,
-  ToolInput,
-  ToolOutput,
-} from "../ai-elements/tool";
 import { SparklesIcon } from "./icons";
 import { MessageActions } from "./message-actions";
 import { MessageReasoning } from "./message-reasoning";
-import { renderPiToolSpecializedAction } from "./pi-tool-specializations";
 import { PreviewAttachment } from "./preview-attachment";
 import { ProviderStatsToggle } from "./provider-stats-toggle";
+import { PiToolPart } from "./tool-renderers/registry";
 
 const PurePreviewMessage = ({
   chatId,
@@ -101,43 +94,7 @@ const PurePreviewMessage = ({
 
     if (part.type === "tool-pi") {
       const toolPart = part as PiToolUIPart;
-      const isOpen =
-        toolPart.state === "input-available" ||
-        toolPart.state === "output-error";
-      const specializedAction = renderPiToolSpecializedAction(toolPart);
-
-      return (
-        <Tool
-          className="min-w-0 max-w-[760px]"
-          data-testid="pi-tool-block"
-          defaultOpen={isOpen}
-          key={toolPart.toolCallId}
-        >
-          <ToolHeader
-            state={toolPart.state}
-            toolName={toolPart.toolName}
-            type="dynamic-tool"
-          />
-          {specializedAction && (
-            <div className="px-3 pb-3">{specializedAction}</div>
-          )}
-          <ToolContent>
-            {(toolPart.input !== undefined ||
-              toolPart.inputText !== undefined) && (
-              <ToolInput
-                input={toolPart.input}
-                inputText={toolPart.inputText}
-              />
-            )}
-            {(toolPart.output !== undefined || toolPart.errorText) && (
-              <ToolOutput
-                errorText={toolPart.errorText}
-                output={toolPart.output}
-              />
-            )}
-          </ToolContent>
-        </Tool>
-      );
+      return <PiToolPart key={toolPart.toolCallId} part={toolPart} />;
     }
 
     return null;
